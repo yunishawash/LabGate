@@ -1,0 +1,34 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+.pnpm-debug.log*
+
+# env files
+.env*
+!.env.example
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# QC attachments live OUTSIDE the app tree (see SPEC §16) — this rule is a
+# safety net in case UPLOAD_DIR is ever pointed inside the repo by mistake.
+/uploads/
