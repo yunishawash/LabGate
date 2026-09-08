@@ -1,5 +1,49 @@
 @import "tailwindcss";
 
+/* ── Thmanyah Sans, self-hosted ───────────────────────────────────────
+   Served from /public/fonts, never from a CDN: the plant server has no
+   internet, and until now Arabic depended on the MACHINE happening to have
+   Cairo installed — which on a fresh server it does not. Self-hosting is what
+   makes the Arabic side look the same on every machine that opens it.
+
+   `font-display: swap` so text is readable while the file loads rather than
+   invisible; the fallback stack below keeps the layout close either way.  */
+@font-face {
+  font-family: "Thmanyah Sans";
+  src: url("/fonts/thmanyahsans-Light.woff2") format("woff2");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Thmanyah Sans";
+  src: url("/fonts/thmanyahsans-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Thmanyah Sans";
+  src: url("/fonts/thmanyahsans-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Thmanyah Sans";
+  src: url("/fonts/thmanyahsans-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Thmanyah Sans";
+  src: url("/fonts/thmanyahsans-Black.woff2") format("woff2");
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* ── Tailwind v4 CSS-first theme. There is NO tailwind.config file. ──── */
 @theme inline {
   --color-background: var(--background-color);
@@ -43,17 +87,22 @@
   * { box-sizing: border-box; }
 
   /* No next/font and no Google Fonts link: the plant server has no internet,
-     and next/font/google needs network AT BUILD TIME. System stacks only.
-     Cairo is used for Arabic when the machine has it. */
+     and next/font/google needs network AT BUILD TIME. The Arabic face ships
+     with the app (see the @font-face block above); Latin stays on the system
+     stack so the English side matches the maintenance app exactly. */
   body {
     background-color: var(--background-color);
     color: var(--foreground-color);
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
                  Arial, sans-serif;
   }
+  /* Applied to the whole RTL page, not only to Arabic glyphs: an order number
+     and a customer name sitting in the same cell should share one face, and
+     Thmanyah Sans carries Latin as well. Cairo and the platform Arabic faces
+     stay as fallbacks for the moment before the file lands. */
   html[dir="rtl"] body {
-    font-family: "Cairo", "Noto Naskh Arabic", "Geeza Pro", "Segoe UI",
-                 system-ui, sans-serif;
+    font-family: "Thmanyah Sans", "Cairo", "Noto Naskh Arabic", "Geeza Pro",
+                 "Segoe UI", system-ui, sans-serif;
   }
 }
 

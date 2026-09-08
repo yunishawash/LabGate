@@ -18,6 +18,11 @@ import mongoose, { Schema, Document } from "mongoose";
  */
 export interface ILabCustomerDoc extends Document {
   name: string;
+  /** Normalized comparison key (see apiHelpers.normalizeName) — lowercased,
+   *  trimmed, internal whitespace collapsed. Uniquely indexed among ACTIVE rows
+   *  so the database itself refuses a near-duplicate, rather than relying on a
+   *  check two concurrent requests can both pass. */
+  nameKey: string;
   nameAr?: string;
   /** The office's own customer code, if they use one. */
   code?: string;
@@ -33,6 +38,10 @@ export interface ILabCustomerDoc extends Document {
 const LabCustomerSchema = new Schema<ILabCustomerDoc>(
   {
     name:        { type: String, required: true, trim: true },
+    // No `index: true` here — the real index is the partial unique one below.
+    // Declaring both makes Mongoose warn and silently drop the options that
+    // matter (unique, partialFilterExpression).
+    nameKey:     { type: String, required: true },
     nameAr:      { type: String, default: "" },
     code:        { type: String, default: "", trim: true },
     phone:       { type: String, default: "" },
@@ -44,10 +53,14 @@ const LabCustomerSchema = new Schema<ILabCustomerDoc>(
   { timestamps: true }
 );
 
-// No DB-level unique index on `name`: the check has to be case- and
-// whitespace-insensitive, which a plain unique index cannot express. The API
-// does it, and a merge tool exists for the duplicates that get in anyway.
+// `name` itself is not unique — the rule is case- and whitespace-insensitive,
+// which is what `nameKey` expresses. Partial, so archiving a customer frees the
+// name for reuse.
 LabCustomerSchema.index({ name: 1 });
+LabCustomerSchema.index(
+  { nameKey: 1 },
+  { unique: true, partialFilterExpression: { isActive: true } }
+);
 LabCustomerSchema.index({ code: 1 });
 
 export default mongoose.models.LabCustomer ||

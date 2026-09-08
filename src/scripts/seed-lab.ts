@@ -20,7 +20,19 @@ import LabParameterThreshold from "../models/LabParameterThreshold";
 // wrong database (SPEC §5).
 
 // ── 8 flour grades ───────────────────────────────────────────────────────────
-const PRODUCTS = ["WFP", "302", "305", "Bab2", "Sanabel", "Bab 1", "Fakher", "Super"];
+// The grade names are what the plant actually calls them. Numeric codes have no
+// translation; the rest are Arabic brand names that the CMMS only ever stored
+// transliterated.
+const PRODUCTS: { name: string; nameAr: string }[] = [
+  { name: "WFP",     nameAr: "" },
+  { name: "302",     nameAr: "" },
+  { name: "305",     nameAr: "" },
+  { name: "Bab2",    nameAr: "باب ٢" },
+  { name: "Sanabel", nameAr: "سنابل" },
+  { name: "Bab 1",   nameAr: "باب ١" },
+  { name: "Fakher",  nameAr: "فاخر" },
+  { name: "Super",   nameAr: "سوبر" },
+];
 
 // ── 11 quality parameters, plant-wide defaults from the Tests/Limits table.
 // `defaultTarget` (the recommended value) is NOT in the QA PDF — that only
@@ -29,20 +41,20 @@ const PRODUCTS = ["WFP", "302", "305", "Bab2", "Sanabel", "Bab 1", "Fakher", "Su
 // PDF states as a true range, gets an obvious midpoint target.
 type Operator = "n_m_t" | "n_l_t" | "range" | "none";
 const PARAMETERS: {
-  name: string; unit: string; operator: Operator;
+  name: string; nameAr: string; unit: string; operator: Operator;
   defaultMin: number | null; defaultMax: number | null; defaultTarget: number | null; order: number;
 }[] = [
-  { name: "Moisture",         unit: "%",      operator: "n_m_t", defaultMin: null, defaultMax: 14.0, defaultTarget: null, order: 1 },
-  { name: "Protein",          unit: "%",      operator: "n_l_t", defaultMin: 11.0, defaultMax: null, defaultTarget: null, order: 2 },
-  { name: "Wet Gluten",       unit: "%",      operator: "n_l_t", defaultMin: 24.0, defaultMax: null, defaultTarget: null, order: 3 },
-  { name: "Gluten Index",     unit: "%",      operator: "n_l_t", defaultMin: 85,   defaultMax: null, defaultTarget: null, order: 4 },
-  { name: "Falling Number",   unit: "sec",    operator: "n_l_t", defaultMin: 260,  defaultMax: null, defaultTarget: null, order: 5 },
-  { name: "Water Absorption", unit: "%",      operator: "n_l_t", defaultMin: 55.0, defaultMax: null, defaultTarget: null, order: 6 },
-  { name: "Ash",              unit: "%",      operator: "n_m_t", defaultMin: null, defaultMax: 0.65, defaultTarget: null, order: 7 },
-  { name: "Zeleny",           unit: "ml",     operator: "n_l_t", defaultMin: 26.0, defaultMax: null, defaultTarget: null, order: 8 },
-  { name: "Damaged Starch",   unit: "%",      operator: "range", defaultMin: 1.5,  defaultMax: 5.0,  defaultTarget: 3.25, order: 9 },
-  { name: "Color L*",         unit: "L*",     operator: "none",  defaultMin: null, defaultMax: null, defaultTarget: null, order: 10 },
-  { name: "W",                unit: "10e-4J", operator: "n_l_t", defaultMin: 200,  defaultMax: null, defaultTarget: null, order: 11 },
+  { name: "Moisture", nameAr: "الرطوبة",         unit: "%",      operator: "n_m_t", defaultMin: null, defaultMax: 14.0, defaultTarget: null, order: 1 },
+  { name: "Protein", nameAr: "البروتين",          unit: "%",      operator: "n_l_t", defaultMin: 11.0, defaultMax: null, defaultTarget: null, order: 2 },
+  { name: "Wet Gluten", nameAr: "الغلوتين الرطب",       unit: "%",      operator: "n_l_t", defaultMin: 24.0, defaultMax: null, defaultTarget: null, order: 3 },
+  { name: "Gluten Index", nameAr: "مؤشر الغلوتين",     unit: "%",      operator: "n_l_t", defaultMin: 85,   defaultMax: null, defaultTarget: null, order: 4 },
+  { name: "Falling Number", nameAr: "رقم السقوط",   unit: "sec",    operator: "n_l_t", defaultMin: 260,  defaultMax: null, defaultTarget: null, order: 5 },
+  { name: "Water Absorption", nameAr: "امتصاص الماء", unit: "%",      operator: "n_l_t", defaultMin: 55.0, defaultMax: null, defaultTarget: null, order: 6 },
+  { name: "Ash", nameAr: "الرماد",              unit: "%",      operator: "n_m_t", defaultMin: null, defaultMax: 0.65, defaultTarget: null, order: 7 },
+  { name: "Zeleny", nameAr: "زيليني",           unit: "ml",     operator: "n_l_t", defaultMin: 26.0, defaultMax: null, defaultTarget: null, order: 8 },
+  { name: "Damaged Starch", nameAr: "النشا المتضرر",   unit: "%",      operator: "range", defaultMin: 1.5,  defaultMax: 5.0,  defaultTarget: 3.25, order: 9 },
+  { name: "Color L*", nameAr: "اللون *L",         unit: "L*",     operator: "none",  defaultMin: null, defaultMax: null, defaultTarget: null, order: 10 },
+  { name: "W", nameAr: "الطاقة (W)",                unit: "10e-4J", operator: "n_l_t", defaultMin: 200,  defaultMax: null, defaultTarget: null, order: 11 },
 ];
 
 // ── Ash% varies by product — the one exception the PDF calls out explicitly.
@@ -110,16 +122,21 @@ async function main() {
   // ── Products ────────────────────────────────────────────────────────────
   let productsCreated = 0;
   const productIdByName = new Map<string, mongoose.Types.ObjectId>();
-  for (const name of PRODUCTS) {
+  for (const p of PRODUCTS) {
     const res = await LabProduct.findOneAndUpdate(
-      { name },
-      { $setOnInsert: { name, isActive: true } },
+      { name: p.name },
+      {
+        $setOnInsert: { name: p.name, isActive: true },
+        // Like the parameters: the Arabic label is a translation, so it syncs on
+        // every run rather than only on insert.
+        $set: { nameAr: p.nameAr },
+      },
       { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
     );
-    productIdByName.set(name, res._id as mongoose.Types.ObjectId);
+    productIdByName.set(p.name, res._id as mongoose.Types.ObjectId);
     productsCreated++;
   }
-  console.log(`Products: ${productsCreated} upserted (${PRODUCTS.join(", ")})`);
+  console.log(`Products: ${productsCreated} upserted (${PRODUCTS.map((p) => p.name).join(", ")})`);
 
   // ── Parameters ──────────────────────────────────────────────────────────
   let parametersCreated = 0;
@@ -128,11 +145,17 @@ async function main() {
     const res = await LabParameter.findOneAndUpdate(
       { name: p.name },
       {
+        // Limits are $setOnInsert only: a re-run must never clobber a threshold
+        // QA has since tuned from the Products & Specs screen.
         $setOnInsert: {
           name: p.name, unit: p.unit, operator: p.operator,
           defaultMin: p.defaultMin, defaultMax: p.defaultMax, defaultTarget: p.defaultTarget,
           order: p.order, isActive: true,
         },
+        // The Arabic label is a translation, not a tuned value — it should
+        // reach existing rows too, so $set. (Mongo forbids the same field in
+        // both operators, which is why nameAr appears only here.)
+        $set: { nameAr: p.nameAr },
       },
       { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
     );

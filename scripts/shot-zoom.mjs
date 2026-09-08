@@ -1,0 +1,25 @@
+import { chromium } from "playwright-core";
+const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const b = await chromium.launch({ executablePath: CHROME, headless: true });
+const ctx = await b.newContext({ viewport: { width: 1000, height: 800 }, deviceScaleFactor: 3 });
+const p = await ctx.newPage();
+await p.goto("http://localhost:3001/login", { waitUntil: "networkidle" });
+await p.fill('input[name="email"]', "gm@gwmc.com");
+await p.fill('input[name="password"]', "pass123");
+await p.click('button[type="submit"]');
+for (let i = 0; i < 40 && p.url().includes("/login"); i++) await p.waitForTimeout(500);
+await p.evaluate(() => localStorage.setItem("labgate-lang", "ar"));
+await p.goto("http://localhost:3001/orders", { waitUntil: "networkidle" });
+const id = await p.evaluate(async () => {
+  const r = await fetch("/api/orders?search=ORD-2026-000012");
+  return (await r.json()).orders?.[0]?._id;
+});
+await p.goto(`http://localhost:3001/orders/${id}`, { waitUntil: "networkidle" });
+await p.waitForTimeout(2000);
+const el = await p.locator("ol").first();
+await el.screenshot({ path: "/tmp/zoom-chain.png" });
+const font = await p.evaluate(() => getComputedStyle(document.body).fontFamily);
+const loaded = await p.evaluate(() => document.fonts.check('16px "Thmanyah Sans"'));
+console.log(`body font-family: ${font}`);
+console.log(`Thmanyah Sans loaded: ${loaded}`);
+await b.close();

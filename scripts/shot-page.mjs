@@ -1,0 +1,16 @@
+import { chromium } from "playwright-core";
+const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const [email, path, out, lang = "en"] = process.argv.slice(2);
+const b = await chromium.launch({ executablePath: CHROME, headless: true });
+const p = await (await b.newContext({ viewport: { width: 1500, height: 1000 } })).newPage();
+await p.goto("http://localhost:3001/login", { waitUntil: "networkidle" });
+await p.fill('input[name="email"]', email);
+await p.fill('input[name="password"]', "pass123");
+await p.click('button[type="submit"]');
+for (let i = 0; i < 40 && p.url().includes("/login"); i++) await p.waitForTimeout(500);
+if (lang === "ar") await p.evaluate(() => localStorage.setItem("labgate-lang", "ar"));
+await p.goto(`http://localhost:3001${path}`, { waitUntil: "networkidle" });
+await p.waitForTimeout(2200);
+await p.screenshot({ path: out });
+console.log(`saved ${out}`);
+await b.close();

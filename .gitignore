@@ -32,3 +32,9 @@ next-env.d.ts
 # QC attachments live OUTSIDE the app tree (see SPEC §16) — this rule is a
 # safety net in case UPLOAD_DIR is ever pointed inside the repo by mistake.
 /uploads/
+
+# Database dumps — never in git, never in a build context (see .dockerignore)
+backups/
+
+# pm2 logs (DEPLOY_PM2.md) — server-local, not source
+/logs/

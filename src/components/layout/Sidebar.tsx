@@ -6,7 +6,8 @@ import { useSession } from "next-auth/react";
 import {
   LayoutDashboard, ClipboardList, CheckSquare, PenLine, FlaskConical,
   Users2, BarChart3, XCircle, ScrollText, UserCog, Activity,
-  Menu, X, Languages, ChevronsLeft, LifeBuoy,
+  Menu, X, Languages, LifeBuoy,
+  Bell,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { canAccessModule } from "@/lib/modules";
@@ -37,6 +38,8 @@ const NAV: NavItem[] = [
   { href: "/customers",   label: "Customers",       labelAr: "الزبائن",       icon: <Users2          size={18} />, module: "customers" },
   { href: "/reports",     label: "Reports",         labelAr: "التقارير",      icon: <BarChart3       size={18} />, module: "reports" },
   { href: "/rejections",  label: "Rejections",      labelAr: "المرفوضة",      icon: <XCircle         size={18} /> },
+  // No `module`: everyone in the chain gets notified, so everyone needs the page.
+  { href: "/notifications", label: "Notifications",  labelAr: "الإشعارات",     icon: <Bell            size={18} />, badge: "notifications" },
   { href: "/audit-log",   label: "Audit Trail",     labelAr: "سجل التدقيق",   icon: <ScrollText      size={18} />, module: "audit-log" },
   { href: "/users",       label: "Users",           labelAr: "المستخدمون",    icon: <UserCog         size={18} />, module: "users" },
   { href: "/health",      label: "System Health",   labelAr: "صحة النظام",    icon: <Activity        size={18} />, module: "health" },
@@ -107,7 +110,7 @@ export function Sidebar({ lang, onToggleLang, unreadCount = 0 }: SidebarProps) {
         <div className="flex items-center gap-2 px-1 text-slate-400 text-xs">
           <LifeBuoy size={14} className="flex-shrink-0" />
           <span className="truncate">
-            {lang === "ar" ? "بحاجة مساعدة؟" : "Need help?"}
+            {lang === "ar" ? "هل تحتاج إلى مساعدة؟" : "Need help?"}
           </span>
         </div>
         <button

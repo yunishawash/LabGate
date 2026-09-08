@@ -38,6 +38,9 @@ export const ALL_PERMISSIONS: string[] = [...RESTRICTED_MODULES];
  * role (SPEC §10.0) — the weighbridge operator sees one block, the General
  * Manager sees seven. One destination, nine different screens.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- both are part
+// of the signature every caller already passes; the body ignores them today
+// because the dashboard composes itself per role.
 export function landingPathFor(_role: string, _permissions: string[] = []): string {
   return "/dashboard";
 }

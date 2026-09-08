@@ -4,6 +4,7 @@ import type { Session } from "next-auth";
 import { AuthProvider } from "./AuthProvider";
 import { Sidebar } from "./Sidebar";
 import { Header } from "./Header";
+import { useUnreadCount } from "@/lib/useUnreadCount";
 
 /**
  * Bilingual context. No i18n library — call sites carry both literals inline:
@@ -46,7 +47,10 @@ export function AppShell({
   initialSession: Session | null;
 }) {
   const [lang, setLang] = useState<Lang>("en");
-  const [unreadCount] = useState(0); // wired to SSE in step 9.2
+  // Only opens a stream once there is somebody to open it for — the login
+  // page renders this shell too, and an unauthenticated EventSource would
+  // reconnect against a 401 forever.
+  const { unread: unreadCount } = useUnreadCount(!!initialSession?.user);
 
   useEffect(() => {
     const stored = localStorage.getItem(LANG_KEY) as Lang | null;

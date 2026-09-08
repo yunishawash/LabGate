@@ -1,0 +1,48 @@
+# LabGate — one app, one database, on one plant server.
+#
+# Two deliberate choices, both from SPEC §19:
+#  * Mongo is NOT published to the host. It is reachable only on the private
+#    compose network, so the database has no exposure beyond this file.
+#  * Mongo is STANDALONE, not a replica set. Nothing in this codebase uses a
+#    transaction, and the CMMS's rs0 is exactly where "not primary" write
+#    failures came from.
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: labgate-mongo
+    restart: unless-stopped
+    # No `ports:` on purpose — see above. Use `docker compose exec mongo mongosh`.
+    volumes:
+      - mongo-data:/data/db
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  app:
+    build: .
+    container_name: labgate-app
+    restart: unless-stopped
+    # Waits for a database that answers, not merely a container that started.
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/labgate
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required — generate with: openssl rand -base64 32}
+      AUTH_URL: ${AUTH_URL:?AUTH_URL is required — the real public origin, e.g. https://lab.gwmc.local}
+      UPLOAD_DIR: /uploads
+      TZ: ${TZ:-Asia/Hebron}
+    ports:
+      - "${APP_PORT:-3001}:3001"
+    volumes:
+      # Outside the image, so a redeploy cannot delete a year of QC attachments.
+      - uploads:/uploads
+
+volumes:
+  mongo-data:
+  uploads:

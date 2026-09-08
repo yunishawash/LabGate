@@ -1,0 +1,33 @@
+# Nothing here belongs in a build context. Two of these are not merely
+# housekeeping:
+#
+#   backups/  — full database dumps. Next's `output: "standalone"` copies the
+#               whole project directory, so anything reaching the context
+#               reaches the image. A production image was shipping a complete
+#               dump of users, orders and the audit trail until this line
+#               existed. This is the single most important entry in the file.
+#
+#   *.md      — SPEC.md and BUILD_CHECKLIST.md are internal planning notes:
+#               open client questions, unresolved decisions, the reasoning
+#               behind them. They do not belong in a deployed artifact.
+
+node_modules
+.next
+.git
+.gitignore
+
+backups
+attachments
+scripts
+ops
+uploads
+
+.env
+.env.*
+!.env.example
+
+*.md
+Dockerfile
+.dockerignore
+docker-compose.yml
+tsconfig.tsbuildinfo

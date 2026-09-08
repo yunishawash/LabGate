@@ -189,6 +189,7 @@ export interface ILabParameterThreshold {
 export interface ILabProductSpec {
   parameterId: string;
   name: string;
+  nameAr?: string;
   unit: string;
   order: number;
   /** Effective values (override if present, else parameter default). */

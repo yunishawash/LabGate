@@ -17,10 +17,13 @@ await page.goto("http://localhost:3001/login", { waitUntil: "networkidle" });
 await page.fill('input[name="email"]', email);
 await page.fill('input[name="password"]', password);
 await page.click('button[type="submit"]');
-await page.waitForLoadState("networkidle");
-await page.waitForTimeout(800);
-if (page.url().endsWith("/login")) {
-  throw new Error("still on /login — sign-in failed");
+// A cold dev server compiles the destination on first hit, which can take
+// several seconds — poll rather than assuming one fixed wait is enough.
+for (let i = 0; i < 30 && page.url().includes("/login"); i++) {
+  await page.waitForTimeout(500);
+}
+if (page.url().includes("/login")) {
+  throw new Error(`still on ${page.url()} — sign-in failed`);
 }
 
 if (lang === "ar") {

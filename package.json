@@ -14,7 +14,13 @@
     "check:db": "tsx src/scripts/check-db.ts",
     "seed": "tsx src/scripts/seed.ts",
     "seed:lab": "tsx src/scripts/seed-lab.ts",
-    "check:scoring": "tsx src/scripts/check-scoring.ts"
+    "seed:customers": "tsx src/scripts/seed-customers.ts",
+    "check:scoring": "tsx src/scripts/check-scoring.ts",
+    "migrate:customer-namekey": "tsx src/scripts/backfill-customer-namekey.ts",
+    "check:concurrency": "tsx src/scripts/check-concurrency.ts",
+    "backfill:ar": "tsx src/scripts/backfill-arabic-names.ts",
+    "seed:prod": "tsx src/scripts/seed-production.ts",
+    "clear:demo": "tsx src/scripts/clear-demo-data.ts"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.11",

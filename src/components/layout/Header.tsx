@@ -1,4 +1,5 @@
 "use client";
+import { useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import { Bell, LogOut } from "lucide-react";
 import { ROLE_LABELS, type UserRole } from "@/types";
@@ -12,6 +13,7 @@ function initials(name: string): string {
 export function Header({ unreadCount = 0 }: { unreadCount?: number }) {
   const { data: session } = useSession();
   const { lang, t } = useLang();
+  const router = useRouter();
 
   const name = session?.user?.name ?? "";
   const role = (session?.user?.role ?? "") as UserRole;
@@ -20,8 +22,10 @@ export function Header({ unreadCount = 0 }: { unreadCount?: number }) {
   return (
     <header className="h-16 flex-shrink-0 bg-white border-b border-slate-200 flex items-center justify-end gap-3 px-4 md:px-6">
       <button
+        onClick={() => router.push("/notifications")}
         className="relative w-9 h-9 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 grid place-items-center cursor-pointer"
         aria-label={t("Notifications", "الإشعارات")}
+        title={t("Notifications", "الإشعارات")}
       >
         <Bell size={18} />
         {unreadCount > 0 && (
