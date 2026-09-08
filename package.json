@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",
+    "postbuild": "rm -rf .next/standalone/public .next/standalone/.next/static && cp -r public .next/standalone/public && cp -r .next/static .next/standalone/.next/static && ([ -f .env.local ] && cp .env.local .next/standalone/.env.local || true)",
     "start": "next start -p 3001",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",

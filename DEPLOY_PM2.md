@@ -27,55 +27,95 @@ where it appears.
 
 ---
 
-## 2. Install Node, Mongo, pm2
+## 2. Install Node and pm2 — and Mongo, if this box doesn't already have it
 
 ```bash
 # Node 22
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs
 
-# MongoDB 7 (community edition)
-curl -fsSL https://pgp.mongodb.com/server-7.0.asc | sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor
-echo "deb [signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg] https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/7.0 multiverse" \
-  | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
-sudo apt-get update && sudo apt-get install -y mongodb-org
-
-# Run standalone Mongo on 27020, not the default 27017 — the same convention
-# .env.example uses locally, and it matters if this box also runs the CMMS's
-# Mongo on 27017.
-sudo sed -i 's/port: 27017/port: 27020/' /etc/mongod.conf
-# bindIp should stay 127.0.0.1 — Mongo has no business listening beyond
-# localhost; the app on this same host is its only client.
-sudo systemctl enable --now mongod
-
 npm install -g pm2
 ```
 
-Confirm: `mongosh --port 27020 --eval "db.adminCommand('ping')"` should print
-`{ ok: 1 }`.
+**Mongo — two cases, check which one this server is before doing anything:**
+
+```bash
+sudo systemctl status mongod --no-pager   # already installed and running?
+```
+
+- **Nothing running yet (fresh box):** install a standalone MongoDB 7 and let
+  it use the default port:
+
+  ```bash
+  curl -fsSL https://pgp.mongodb.com/server-7.0.asc | sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor
+  echo "deb [signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg] https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/7.0 multiverse" \
+    | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+  sudo apt-get update && sudo apt-get install -y mongodb-org
+  # bindIp should stay 127.0.0.1 — Mongo has no business listening beyond
+  # localhost; the app on this same host is its only client.
+  sudo systemctl enable --now mongod
+  ```
+
+  Confirm: `mongosh --eval "db.adminCommand('ping')"` should print `{ ok: 1 }`.
+
+- **A `mongod` is already running here for another app** (this box's actual
+  situation): do **not** install a second one or touch that app's config.
+  First confirm it's standalone, not a replica set — sharing a replica set's
+  "not primary" failover behavior is exactly the failure mode this project's
+  standalone-Mongo design exists to avoid (see `src/lib/mongoose.ts`):
+
+  ```bash
+  mongosh --eval "rs.status()"        # must error "not running with --replSet"
+  sudo ss -tlnp | grep mongo          # note the port — this box: 27017
+  mongosh --eval "db.runCommand({connectionStatus:1})"   # auth required? (this box: no)
+  ```
+
+  If it's confirmed standalone with no auth, LabGate just uses that same
+  instance under its own database name (`labgate`) — nothing to install, no
+  new systemd unit, no new data directory. That's what §3 below assumes.
 
 ---
 
 ## 3. First deploy
 
 ```bash
-git clone <repo> /srv/labgate && cd /srv/labgate
+git clone <repo> /opt/LabGate && cd /opt/LabGate
 npm ci
 ```
 
-Write `/srv/labgate/.env.local` (Next.js loads it automatically, in
-production exactly as in dev — nothing else needs to inject these):
+Write `/opt/LabGate/.env.local` — every value below must be the **real** one
+for this server, not left as shown; a literal `<placeholder>` pasted as-is
+produces `Invalid URL` at runtime, not a helpful error at write time:
 
 ```bash
-MONGODB_URI=mongodb://127.0.0.1:27020/labgate
-AUTH_SECRET=$(openssl rand -base64 32)   # MUST differ from the CMMS's
-AUTH_URL=https://lab.gwmc.local          # the real public origin — see §4
-UPLOAD_DIR=/srv/labgate-uploads          # OUTSIDE the repo — see §6
+cat > /opt/LabGate/.env.local <<EOF
+MONGODB_URI=mongodb://127.0.0.1:27017/labgate
+AUTH_SECRET=$(openssl rand -base64 32)
+AUTH_URL=https://lab.gwmc.local
+UPLOAD_DIR=/opt/LabGate-uploads
+EOF
 ```
 
+- `AUTH_SECRET` — the `$(openssl rand -base64 32)` above generates it inline; **must differ** from the CMMS's.
+- `AUTH_URL` — the real origin this server is reached at. See §4 before deciding `http://` vs `https://`.
+- `UPLOAD_DIR` — outside the repo; see §6.
+
 ```bash
-mkdir -p /srv/labgate-uploads
+mkdir -p /opt/LabGate-uploads
 npm run build
+```
+
+`npm run build`'s `postbuild` step (`package.json`) then copies `public/`,
+`.next/static/`, **and this `.env.local`** into `.next/standalone/` —
+`ecosystem.config.cjs` runs the standalone server directly
+(`.next/standalone/server.js`), which is what `output: "standalone"` in
+`next.config.mjs` requires (`next start` refuses to run against that build at
+all). That standalone server does **not** auto-load `.env.local` the way
+`next dev`/`next start` do — it only sees the copy `postbuild` places next to
+`server.js`, which is why `.env.local` must exist in the repo root *before*
+running `npm run build`, every time.
+
+```bash
 pm2 start ecosystem.config.cjs
 pm2 save                 # so `pm2 resurrect` on boot brings this back
 pm2 startup systemd      # prints a command — run the one it prints, as root
@@ -139,13 +179,13 @@ at the right port:
 
 ```bash
 crontab -e
-15 3 * * * MONGODB_URI=mongodb://127.0.0.1:27020/labgate /srv/labgate/ops/backup.sh >> /var/log/labgate-backup.log 2>&1
+15 3 * * * MONGODB_URI=mongodb://127.0.0.1:27017/labgate /opt/LabGate/ops/backup.sh >> /var/log/labgate-backup.log 2>&1
 ```
 
 **Rehearse the restore. A backup nobody has restored is a hope.**
 
 ```bash
-MONGODB_URI=mongodb://127.0.0.1:27020 ops/restore.sh backups/labgate-YYYY-MM-DD_HHMM.archive.gz
+MONGODB_URI=mongodb://127.0.0.1:27017 ops/restore.sh backups/labgate-YYYY-MM-DD_HHMM.archive.gz
 ```
 
 It restores into `labgate_restore_check`, never over the live database, and
@@ -160,15 +200,15 @@ deliberately.
 
 ## 6. Uploads
 
-`UPLOAD_DIR` must point **outside** `/srv/labgate` (the repo directory) —
-`/srv/labgate-uploads` above. There's no container volume doing this for you
+`UPLOAD_DIR` must point **outside** `/opt/LabGate` (the repo directory) —
+`/opt/LabGate-uploads` above. There's no container volume doing this for you
 here: a redeploy is a `git pull`, which only touches files tracked in the
 repo, so anything under `UPLOAD_DIR` survives automatically as long as the
 path itself is outside the repo tree. Putting it inside the repo by mistake
 is the one way to lose it (`.gitignore`'s `/uploads/` rule is a safety net for
 exactly that case, not a plan).
 
-- [ ] `UPLOAD_DIR` confirmed outside `/srv/labgate`
+- [ ] `UPLOAD_DIR` confirmed outside `/opt/LabGate`
 - [ ] Upload a file, `git pull && npm run build && pm2 reload labgate`, confirm it still loads
 
 ---
@@ -216,7 +256,7 @@ Two things keep them apart, and both must hold:
 ## 9. Redeploying / rolling back
 
 ```bash
-cd /srv/labgate
+cd /opt/LabGate
 git pull                    # or: git checkout <tag>
 npm ci
 npm run build
@@ -269,7 +309,7 @@ pm2 set pm2-logrotate:retain 14
 Same substance as `DEPLOY.md` §7 — repeated here for this path:
 
 - [ ] `npx tsc --noEmit` clean · `npm run build` succeeds · `vitest` green
-- [ ] Mongo is standalone (not a replica set) and accepts writes on 27020
+- [ ] Mongo is standalone (not a replica set) and accepts writes on 27017
 - [ ] Session cookie is `gwmc-lab.*` with an env-driven `secure` flag
 - [ ] `.env.local` set: `MONGODB_URI`, real `AUTH_URL`, a **fresh** `AUTH_SECRET`, `UPLOAD_DIR`
 - [ ] Demo data cleared (`npm run clear:demo -- --yes`) if this database was ever seeded locally
