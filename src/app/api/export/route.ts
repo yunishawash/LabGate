@@ -1,13 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongoose";
 import { requireSession } from "@/lib/requireSession";
-import { dateRange, oneOf } from "@/lib/apiHelpers";
+import { containsRegex, dateRange, oid, oneOf } from "@/lib/apiHelpers";
 import { buildWorkbook, workbookToBuffer, xlsxResponse, type SheetDef } from "@/lib/excel";
 import { visibilityFilter, andFilters, SALES_STAGES, type Actor } from "@/lib/salesWorkflow";
 import { liveDelegationRoles } from "@/lib/salesAuth";
 import SalesOrder from "@/models/SalesOrder";
+import LabSample from "@/models/LabSample";
+import LabParameter from "@/models/LabParameter";
+import { LAB_STATUSES, LAB_SHIFTS } from "@/lib/labConstants";
+import {
+  LAB_STATUS_LABELS, LAB_DECISION_LABELS,
+  type LabStatus, type LabDecision, type ILabSampleResult,
+} from "@/types";
 
-const TYPES = ["orders", "pipeline", "cycleTime"] as const;
+const TYPES = ["orders", "pipeline", "cycleTime", "lab"] as const;
 
 const stageName = (i: number | null | undefined, lang: "en" | "ar") => {
   const s = SALES_STAGES.find((x) => x.index === i);
@@ -184,6 +191,94 @@ export async function GET(req: NextRequest) {
           new Date(s.actedAt as string).toISOString().slice(0, 16).replace("T", " "),
         ]),
       },
+    ];
+  }
+
+  if (type === "lab") {
+    const filter: Record<string, unknown> = { isActive: true };
+
+    const productId = searchParams.get("product");
+    if (productId && productId !== "all") {
+      const id = oid(productId);
+      if (!id) return NextResponse.json({ error: "Invalid product" }, { status: 400 });
+      filter.productId = id;
+    }
+
+    const customerId = searchParams.get("customer");
+    if (customerId && customerId !== "all") {
+      const id = oid(customerId);
+      if (!id) return NextResponse.json({ error: "Invalid customer" }, { status: 400 });
+      filter.customerId = id;
+    }
+
+    const status = searchParams.get("status");
+    if (status && status !== "all") filter.overallStatus = oneOf(status, LAB_STATUSES, "pass");
+
+    const shift = searchParams.get("shift");
+    if (shift && shift !== "all") filter.shift = oneOf(shift, LAB_SHIFTS, "");
+
+    const search = searchParams.get("search");
+    if (search) {
+      const rx = containsRegex(search);
+      filter.$or = [{ sampleNumber: rx }, { batchId: rx }, { orderNumber: rx }];
+    }
+
+    const labRange = dateRange(searchParams.get("from"), searchParams.get("to"));
+    if (labRange) filter.sampleDate = labRange;
+
+    const [samples, activeParameters] = await Promise.all([
+      LabSample.find(filter).sort({ sampleDate: -1 }).limit(5000).lean(),
+      LabParameter.find({ isActive: true }).sort({ order: 1, name: 1 }).lean(),
+    ]);
+
+    const isoDate = (d: unknown) => new Date(d as string).toISOString().slice(0, 10);
+    const statusText = (s: LabStatus) => LAB_STATUS_LABELS[s]?.[lang] ?? s;
+    const decisionText = (d: LabDecision) =>
+      d && d !== "pending" ? LAB_DECISION_LABELS[d]?.[lang] ?? d : "";
+
+    // Sheet 1 — pivoted, one row per sample, one column per active parameter,
+    // the way the printed QC report reads.
+    const resultsHeaders = [
+      t("Sample #", "رقم العيّنة"), t("Date", "التاريخ"), t("Shift", "الوردية"),
+      t("Batch/Lot", "الدفعة"), t("Product", "الصنف"), t("Customer", "الزبون"),
+      t("Tested by", "الفاحص"),
+      ...activeParameters.map((p) => (p.unit ? `${p.name} (${p.unit})` : p.name)),
+      t("Lab Status", "حالة المختبر"), t("Final Decision", "الاعتماد النهائي"),
+      t("Decision Note", "ملاحظة الاعتماد"),
+    ];
+    const resultsRows = samples.map((s) => {
+      const byParam = new Map(
+        (s.results as ILabSampleResult[]).map((r) => [String(r.parameterId), r.value])
+      );
+      return [
+        s.sampleNumber, isoDate(s.sampleDate), s.shift || "", s.batchId || "",
+        s.product, s.customer || "", s.testedByName,
+        ...activeParameters.map((p) => byParam.get(String(p._id)) ?? null),
+        statusText(s.overallStatus), decisionText(s.finalDecision), s.finalDecisionNote || "",
+      ];
+    });
+
+    // Sheet 2 — one row per individual reading, carrying the spec limits and
+    // deviation that applied at test time (frozen per-result, see LabSample.ts).
+    const detailHeaders = [
+      t("Sample #", "رقم العيّنة"), t("Date", "التاريخ"), t("Batch/Lot", "الدفعة"),
+      t("Product", "الصنف"), t("Customer", "الزبون"), t("Parameter", "البارامتر"),
+      t("Unit", "الوحدة"), t("Result", "النتيجة"), t("Min", "الحد الأدنى"),
+      t("Max", "الحد الأقصى"), t("Target", "الهدف"),
+      t("Deviation from Target", "الانحراف عن الهدف"), t("Status", "الحالة"),
+    ];
+    const detailRows = samples.flatMap((s) =>
+      (s.results as ILabSampleResult[]).map((r) => [
+        s.sampleNumber, isoDate(s.sampleDate), s.batchId || "", s.product, s.customer || "",
+        r.parameterName, r.unit || "", r.value, r.min ?? null, r.max ?? null, r.target ?? null,
+        r.deviation != null ? `${(r.deviation * 100).toFixed(1)}%` : "",
+        statusText(r.status),
+      ])
+    );
+
+    sheets = [
+      { name: t("Lab Results", "نتائج المختبر"), headers: resultsHeaders, rows: resultsRows },
+      { name: t("Detail", "التفصيل"), headers: detailHeaders, rows: detailRows },
     ];
   }
 

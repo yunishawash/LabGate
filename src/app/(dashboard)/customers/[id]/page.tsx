@@ -5,8 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, Phone, User, MapPin } from "lucide-react";
 import { useLang } from "@/components/layout/AppShell";
 import { StatCard } from "@/components/ui/stat-card";
-import { QcStatusBadge } from "@/components/ui/qc-status-badge";
-import { StatusSplitBar } from "@/components/ui/lab-charts";
+import { CustomerQualityProfile } from "@/components/lab/CustomerQualityProfile";
 import { formatDate } from "@/lib/utils";
 import { ORDER_STATUS_LABELS, ORDER_STATUS_BADGE, type SalesOrderStatus } from "@/types";
 import { SALES_STAGES } from "@/lib/salesWorkflow";
@@ -17,9 +16,7 @@ interface Profile {
     orders: number; posted: number; rejected: number; pending: number;
     orderedKg: number; postedKg: number; actualKg: number; lostToRejectionKg: number;
   };
-  quality: { samples: number; pass: number; warning: number; fail: number; inSpecPct: number | null; lastSampleDate: string | null };
   recentOrders: { _id: string; orderNumber: string; referenceNo?: string; orderDate: string; status: SalesOrderStatus; currentStageIndex: number; totalWeightKg: number; actualNetWeightKg?: number | null; varianceKg?: number | null }[];
-  recentSamples: { _id: string; sampleNumber: string; sampleDate: string; product: string; overallStatus: string; orderNumber?: string }[];
 }
 
 const tons = (kg: number) => (kg / 1000).toFixed(3);
@@ -56,7 +53,7 @@ export default function CustomerProfilePage() {
     return <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>;
   }
 
-  const { customer, commercial, quality, recentOrders, recentSamples } = data;
+  const { customer, commercial, recentOrders } = data;
   const stageLabel = (i: number) => {
     const s = SALES_STAGES.find((x) => x.index === i);
     return s ? `${i}/8 · ${lang === "ar" ? s.ar : s.en}` : `${i}/8`;
@@ -122,71 +119,30 @@ export default function CustomerProfilePage() {
 
       <section className="space-y-3">
         <h2 className="text-sm font-medium text-slate-700">{t("Quality", "الجودة")}</h2>
-        {quality.samples === 0 ? (
-          <p className="text-sm text-slate-400">{t("No samples recorded for this customer.", "لا توجد عيّنات مسجّلة لهذا الزبون.")}</p>
-        ) : (
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3">
-            <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
-              <span className="text-sm text-slate-600">
-                {t("Samples", "العيّنات")}{" "}
-                <bdi className="font-medium text-slate-900 tabular-nums">{quality.samples}</bdi>
-              </span>
-              <span className="text-sm text-slate-600">
-                {t("In spec", "نسبة المطابقة")}{" "}
-                <bdi className="font-medium text-slate-900 tabular-nums">{quality.inSpecPct}%</bdi>
-              </span>
-              {quality.lastSampleDate && (
-                <span className="text-sm text-slate-500">
-                  {t("Last tested", "آخر فحص")} <bdi>{formatDate(quality.lastSampleDate)}</bdi>
-                </span>
-              )}
-            </div>
-            <StatusSplitBar split={{ pass: quality.pass, warning: quality.warning, fail: quality.fail }} />
-          </div>
-        )}
+        <CustomerQualityProfile customerId={customer._id} />
       </section>
 
-      <div className="grid lg:grid-cols-2 gap-4">
-        {commercial && (
-          <section className="space-y-2">
-            <h2 className="text-sm font-medium text-slate-700">{t("Recent orders", "آخر الطلبيات")}</h2>
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm divide-y divide-slate-100">
-              {recentOrders.length === 0 ? (
-                <p className="p-6 text-center text-sm text-slate-400">{t("None yet.", "ولا واحدة بعد.")}</p>
-              ) : recentOrders.map((o) => (
-                <Link key={o._id} href={`/orders/${o._id}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50/60">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm text-slate-900 font-medium">{o.orderNumber}</div>
-                    <bdi className="text-xs text-slate-400 block">{formatDate(o.orderDate)}</bdi>
-                  </div>
-                  <bdi className="text-sm tabular-nums text-slate-600">{tons(o.totalWeightKg)} t</bdi>
-                  <span className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap ${ORDER_STATUS_BADGE[o.status]}`}>
-                    {o.status === "Pending" ? stageLabel(o.currentStageIndex) : ORDER_STATUS_LABELS[o.status][lang]}
-                  </span>
-                </Link>
-              ))}
-            </div>
-          </section>
-        )}
-
+      {commercial && (
         <section className="space-y-2">
-          <h2 className="text-sm font-medium text-slate-700">{t("Recent samples", "آخر العيّنات")}</h2>
+          <h2 className="text-sm font-medium text-slate-700">{t("Recent orders", "آخر الطلبيات")}</h2>
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm divide-y divide-slate-100">
-            {recentSamples.length === 0 ? (
+            {recentOrders.length === 0 ? (
               <p className="p-6 text-center text-sm text-slate-400">{t("None yet.", "ولا واحدة بعد.")}</p>
-            ) : recentSamples.map((s) => (
-              <div key={s._id} className="flex items-center gap-3 px-4 py-2.5">
+            ) : recentOrders.map((o) => (
+              <Link key={o._id} href={`/orders/${o._id}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50/60">
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm text-slate-900 font-medium">{s.sampleNumber}</div>
-                  <bdi className="text-xs text-slate-400 block">{formatDate(s.sampleDate)}</bdi>
+                  <div className="text-sm text-slate-900 font-medium">{o.orderNumber}</div>
+                  <bdi className="text-xs text-slate-400 block">{formatDate(o.orderDate)}</bdi>
                 </div>
-                <span className="text-sm text-slate-600 truncate max-w-24">{s.product}</span>
-                <QcStatusBadge status={s.overallStatus} size="xs" />
-              </div>
+                <bdi className="text-sm tabular-nums text-slate-600">{tons(o.totalWeightKg)} t</bdi>
+                <span className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap ${ORDER_STATUS_BADGE[o.status]}`}>
+                  {o.status === "Pending" ? stageLabel(o.currentStageIndex) : ORDER_STATUS_LABELS[o.status][lang]}
+                </span>
+              </Link>
             ))}
           </div>
         </section>
-      </div>
+      )}
     </div>
   );
 }

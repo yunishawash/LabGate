@@ -1,16 +1,26 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { TrendingUp, AlertTriangle, FlaskConical, Activity } from "lucide-react";
-import { Input } from "@/components/ui/input";
-import { Combobox } from "@/components/ui/combobox";
 import { StatCard } from "@/components/ui/stat-card";
 import { useLang } from "@/components/layout/AppShell";
 import { InSpecChart, StatusSplitBar, type InSpecRow } from "@/components/ui/lab-charts";
-import { QC_RATING_LABELS, type ILabStatRow, type ILabProduct, type QcRating } from "@/types";
+import { QC_RATING_LABELS, type ILabStatRow, type QcRating } from "@/types";
 
-const SELECT_CLASS =
-  "h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-700 " +
-  "outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100 cursor-pointer";
+/**
+ * Filters this panel reads — a plain object, not URL/component state it owns
+ * itself. It needs to be embeddable both standalone (the Lab page's KPI tab,
+ * which owns a product/date filter bar) and inside a customer's quality
+ * profile (which needs that SAME filter bar to also drive a trend chart and a
+ * delivery table at once — two independent pickers on one screen would be
+ * wrong). One shared bar upstream, this panel just renders what it's told.
+ */
+export interface LabKpiFilters {
+  product?: string;   // ObjectId, or "all"/undefined to mean no filter
+  customer?: string;  // ObjectId, or "all"/undefined
+  shift?: string;
+  from?: string;       // yyyy-mm-dd
+  to?: string;
+}
 
 interface Summary {
   totalSamples: number;
@@ -29,21 +39,21 @@ const RATING_BADGE: Record<QcRating, string> = {
   needs_attention: "bg-red-100 text-red-700",
 };
 
-export function KpiPanel({ products }: { products: ILabProduct[] }) {
+export function KpiPanel({ filters }: { filters: LabKpiFilters }) {
   const { lang, t } = useLang();
-
-  const [product, setProduct] = useState("all");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
 
   const [rows, setRows] = useState<ILabStatRow[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const { product, customer, shift, from, to } = filters;
+
   const load = useCallback(async () => {
     setLoading(true);
     const params = new URLSearchParams();
-    if (product !== "all") params.set("product", product);
+    if (product && product !== "all") params.set("product", product);
+    if (customer && customer !== "all") params.set("customer", customer);
+    if (shift && shift !== "all") params.set("shift", shift);
     if (from) params.set("from", from);
     if (to) params.set("to", to);
     try {
@@ -55,7 +65,9 @@ export function KpiPanel({ products }: { products: ILabProduct[] }) {
       setRows([]); setSummary(null);
     }
     setLoading(false);
-  }, [product, from, to]);
+    // Depend on the individual primitive fields, not `filters` itself — a
+    // caller can pass a fresh object literal every render with no useMemo.
+  }, [product, customer, shift, from, to]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -64,27 +76,13 @@ export function KpiPanel({ products }: { products: ILabProduct[] }) {
     .sort((a, b) => a.inSpecPct - b.inSpecPct)
     .slice(0, 12)
     .map((r) => ({
-      label: `${r.parameterName}${product === "all" ? ` · ${r.product}` : ""}`,
+      label: `${r.parameterName}${!product || product === "all" ? ` · ${r.product}` : ""}`,
       value: Math.round(r.inSpecPct * 10) / 10,
       count: r.count,
     }));
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <Combobox
-          triggerClassName={SELECT_CLASS + " w-44"}
-          value={product}
-          onChange={setProduct}
-          options={[
-            { value: "all", label: t("All products", "كل الأصناف") },
-            ...products.map((p) => ({ value: p._id, label: (lang === "ar" && p.nameAr) || p.name })),
-          ]}
-        />
-        <Input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className="h-9 w-40" />
-        <Input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className="h-9 w-40" />
-      </div>
-
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard title={t("Samples", "العيّنات")} value={summary?.totalSamples ?? 0} icon={<FlaskConical size={18} />} color="blue" />
         <StatCard

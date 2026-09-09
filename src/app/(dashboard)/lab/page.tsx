@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
-import { FlaskConical, Plus, Paperclip, Search, X } from "lucide-react";
+import { FlaskConical, Plus, Paperclip, Search, X, Download } from "lucide-react";
 import { useLang } from "@/components/layout/AppShell";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { StatCard } from "@/components/ui/stat-card";
@@ -99,6 +99,22 @@ export default function LabPage() {
 
   useEffect(() => { fetchSamples(); }, [fetchSamples]);
 
+  // Same GET-navigation pattern as the Reports page: `assign()` rather than
+  // `location.href` (the React Compiler rejects writing to a global), and the
+  // response is Content-Disposition: attachment, so it downloads without
+  // leaving the page. Always matches whatever the Results tab has on screen.
+  const downloadLab = () => {
+    const p = new URLSearchParams({ type: "lab", lang });
+    if (search) p.set("search", search);
+    if (product !== "all") p.set("product", product);
+    if (customer !== "all") p.set("customer", customer);
+    if (status !== "all") p.set("status", status);
+    if (shift !== "all") p.set("shift", shift);
+    if (from) p.set("from", from);
+    if (to) p.set("to", to);
+    window.location.assign(`/api/export?${p}`);
+  };
+
   const counts = samples.reduce(
     (acc, s) => { acc[s.overallStatus] = (acc[s.overallStatus] ?? 0) + 1; return acc; },
     {} as Record<string, number>
@@ -185,11 +201,19 @@ export default function LabPage() {
             )}
           </p>
         </div>
-        {tab === "results" && canRecord && (
-          <Button className="gap-2" onClick={() => { setEditing(null); setDialogOpen(true); }}>
-            <Plus size={16} />
-            {t("New sample", "عيّنة جديدة")}
-          </Button>
+        {tab === "results" && (
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={downloadLab}>
+              <Download size={14} />
+              {t("Export", "تصدير")}
+            </Button>
+            {canRecord && (
+              <Button className="gap-2" onClick={() => { setEditing(null); setDialogOpen(true); }}>
+                <Plus size={16} />
+                {t("New sample", "عيّنة جديدة")}
+              </Button>
+            )}
+          </div>
         )}
       </div>
 
@@ -319,7 +343,38 @@ export default function LabPage() {
 
       {tab === "customers" && <CustomersTab onChanged={loadCustomers} />}
 
-      {tab === "kpi" && <KpiPanel products={products} />}
+      {tab === "kpi" && <LabKpiTab products={products} />}
+    </div>
+  );
+}
+
+/**
+ * Owns the product/date filter bar that used to live inside `KpiPanel`
+ * itself — pulled out so the same panel can be embedded in a customer's
+ * quality profile driven by a DIFFERENT filter bar (see KpiPanel.tsx).
+ */
+function LabKpiTab({ products }: { products: ILabProduct[] }) {
+  const { t } = useLang();
+  const [product, setProduct] = useState("all");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Combobox
+          triggerClassName={SELECT_CLASS + " w-44"}
+          value={product}
+          onChange={setProduct}
+          options={[
+            { value: "all", label: t("All products", "كل الأصناف") },
+            ...products.map((p) => ({ value: p._id, label: p.name })),
+          ]}
+        />
+        <Input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className="h-9 w-40" />
+        <Input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className="h-9 w-40" />
+      </div>
+      <KpiPanel filters={{ product, from, to }} />
     </div>
   );
 }

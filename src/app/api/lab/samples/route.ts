@@ -56,7 +56,10 @@ export async function GET(req: NextRequest) {
   const range = dateRange(searchParams.get("from"), searchParams.get("to"));
   if (range) filter.sampleDate = range;
 
-  const { page, limit, skip } = paging(searchParams);
+  // Higher ceiling than the default 200: a customer's quality-trend chart
+  // (CustomerQualityProfile) asks for up to 300 samples in one page, not the
+  // paginated Results-tab table this default protects.
+  const { page, limit, skip } = paging(searchParams, 25, 500);
 
   const [samples, total] = await Promise.all([
     LabSample.find(filter).sort({ sampleDate: -1 }).skip(skip).limit(limit).lean(),
