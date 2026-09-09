@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { RotateCcw, Save, Plus, Package } from "lucide-react";
+import { RotateCcw, Save, Plus, Package, SlidersHorizontal, Trash2, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Combobox } from "@/components/ui/combobox";
@@ -9,7 +9,10 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { useLang } from "@/components/layout/AppShell";
-import { LAB_OPERATOR_LABELS, type ILabProduct, type ILabProductSpec, type LabOperator } from "@/types";
+import {
+  LAB_OPERATOR_LABELS,
+  type ILabProduct, type ILabProductSpec, type ILabParameter, type LabOperator,
+} from "@/types";
 
 const SELECT_CLASS =
   "h-9 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700 " +
@@ -34,9 +37,16 @@ const toDraft = (s: ILabProductSpec): Draft => ({
 const same = (a: Draft, b: Draft) =>
   a.min === b.min && a.max === b.max && a.target === b.target && a.operator === b.operator;
 
-export function ProductSpecsTab({ products, onProductsChanged }: {
+const EMPTY_PARAM = {
+  name: "", nameAr: "", unit: "", operator: "range" as LabOperator,
+  defaultMin: "", defaultMax: "", defaultTarget: "", order: "0",
+};
+
+export function ProductSpecsTab({ products, parameters, onProductsChanged, onParametersChanged }: {
   products: ILabProduct[];
+  parameters: ILabParameter[];
   onProductsChanged: () => void;
+  onParametersChanged: () => void;
 }) {
   const { lang, t } = useLang();
 
@@ -47,14 +57,25 @@ export function ProductSpecsTab({ products, onProductsChanged }: {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  const [newProductOpen, setNewProductOpen] = useState(false);
-  const [newProduct, setNewProduct] = useState({ name: "", nameAr: "" });
+  // Add AND rename share this one dialog — `editingProduct` set means rename.
+  const [productDialogOpen, setProductDialogOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<ILabProduct | null>(null);
+  const [productForm, setProductForm] = useState({ name: "", nameAr: "" });
   const [productSaving, setProductSaving] = useState(false);
   const [productError, setProductError] = useState("");
+
+  // Global parameter (test) catalog — add/edit/remove.
+  const [paramDialogOpen, setParamDialogOpen] = useState(false);
+  const [editingParam, setEditingParam] = useState<ILabParameter | null>(null);
+  const [paramForm, setParamForm] = useState(EMPTY_PARAM);
+  const [paramSaving, setParamSaving] = useState(false);
+  const [paramError, setParamError] = useState("");
 
   useEffect(() => {
     if (!productId && products.length) setProductId(products[0]._id);
   }, [products, productId]);
+
+  const selectedProduct = products.find((p) => p._id === productId) ?? null;
 
   const loadSpecs = useCallback(async () => {
     if (!productId) return;
@@ -127,16 +148,27 @@ export function ProductSpecsTab({ products, onProductsChanged }: {
     setSavingId(null);
   };
 
-  const createProduct = async () => {
-    if (!newProduct.name.trim()) return;
+  const openAddProduct = () => { setEditingProduct(null); setProductForm({ name: "", nameAr: "" }); setProductError(""); setProductDialogOpen(true); };
+  const openRenameProduct = (p: ILabProduct) => {
+    setEditingProduct(p);
+    setProductForm({ name: p.name, nameAr: p.nameAr ?? "" });
+    setProductError("");
+    setProductDialogOpen(true);
+  };
+
+  const saveProduct = async () => {
+    if (!productForm.name.trim()) return;
     setProductSaving(true);
     setProductError("");
     try {
-      const res = await fetch("/api/lab/products", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newProduct),
-      });
+      const res = await fetch(
+        editingProduct ? `/api/lab/products/${editingProduct._id}` : "/api/lab/products",
+        {
+          method: editingProduct ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(productForm),
+        }
+      );
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         setProductError((d as { error?: string }).error || `Error ${res.status}`);
@@ -149,9 +181,89 @@ export function ProductSpecsTab({ products, onProductsChanged }: {
       return;
     }
     setProductSaving(false);
-    setNewProductOpen(false);
-    setNewProduct({ name: "", nameAr: "" });
+    setProductDialogOpen(false);
+    setEditingProduct(null);
     onProductsChanged();
+  };
+
+  // Archive, not delete — matches the customer register's own convention: a
+  // product referenced by past orders/samples must keep its name on them.
+  const removeProduct = async (p: ILabProduct) => {
+    if (!confirm(t(`Remove product "${p.name}"?`, `إزالة الصنف "${p.name}"؟`))) return;
+    const res = await fetch(`/api/lab/products/${p._id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      alert((d as { error?: string }).error || `Error ${res.status}`);
+      return;
+    }
+    if (productId === p._id) setProductId("");
+    onProductsChanged();
+  };
+
+  // ── Parameter (test) catalog CRUD ───────────────────────────────────────
+  const openAddParam = () => {
+    setEditingParam(null);
+    setParamForm({ ...EMPTY_PARAM, order: String(parameters.length + 1) });
+    setParamError("");
+    setParamDialogOpen(true);
+  };
+  const openEditParam = (p: ILabParameter) => {
+    setEditingParam(p);
+    setParamForm({
+      name: p.name, nameAr: p.nameAr ?? "", unit: p.unit, operator: p.operator,
+      defaultMin: p.defaultMin == null ? "" : String(p.defaultMin),
+      defaultMax: p.defaultMax == null ? "" : String(p.defaultMax),
+      defaultTarget: p.defaultTarget == null ? "" : String(p.defaultTarget),
+      order: String(p.order ?? 0),
+    });
+    setParamError("");
+    setParamDialogOpen(true);
+  };
+
+  const saveParam = async () => {
+    if (!paramForm.name.trim()) return;
+    setParamSaving(true);
+    setParamError("");
+    try {
+      const res = await fetch(
+        editingParam ? `/api/lab/parameters/${editingParam._id}` : "/api/lab/parameters",
+        {
+          method: editingParam ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: paramForm.name.trim(), nameAr: paramForm.nameAr.trim(),
+            unit: paramForm.unit.trim(), operator: paramForm.operator,
+            defaultMin: paramForm.defaultMin === "" ? null : Number(paramForm.defaultMin),
+            defaultMax: paramForm.defaultMax === "" ? null : Number(paramForm.defaultMax),
+            defaultTarget: paramForm.defaultTarget === "" ? null : Number(paramForm.defaultTarget),
+            order: parseInt(paramForm.order, 10) || 0,
+          }),
+        }
+      );
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setParamError((d as { error?: string }).error || `Error ${res.status}`);
+        setParamSaving(false);
+        return;
+      }
+    } catch {
+      setParamError(t("Network error — please try again.", "خطأ في الشبكة — يُرجى المحاولة مرة أخرى."));
+      setParamSaving(false);
+      return;
+    }
+    setParamSaving(false);
+    setParamDialogOpen(false);
+    setEditingParam(null);
+    onParametersChanged();
+    if (productId) loadSpecs();
+  };
+
+  const removeParam = async (p: ILabParameter) => {
+    if (!confirm(t(`Remove parameter "${p.name}"? Past samples keep their recorded readings.`,
+      `إزالة المعيار "${p.name}"؟ العيّنات السابقة تحتفظ بقراءاتها المسجَّلة.`))) return;
+    await fetch(`/api/lab/parameters/${p._id}`, { method: "DELETE" });
+    onParametersChanged();
+    if (productId) loadSpecs();
   };
 
   return (
@@ -164,13 +276,25 @@ export function ProductSpecsTab({ products, onProductsChanged }: {
           onChange={setProductId}
           options={products.map((p) => ({ value: p._id, label: (lang === "ar" && p.nameAr) || p.name }))}
         />
+        {selectedProduct && (
+          <>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => openRenameProduct(selectedProduct)}>
+              <Pencil size={13} />
+              {t("Rename", "إعادة تسمية")}
+            </Button>
+            <Button variant="outline" size="sm" className="text-red-500 hover:bg-red-50 hover:text-red-600"
+              onClick={() => removeProduct(selectedProduct)}>
+              <Trash2 size={13} />
+            </Button>
+          </>
+        )}
         <span className="text-sm text-slate-400">
           {t(
             "Limits shown are what applies to this product. A blank field means no limit.",
             "الحدود المعروضة هي المطبَّقة على هذا الصنف. الحقل الفارغ يعني بدون حد."
           )}
         </span>
-        <Button variant="outline" size="sm" className="ms-auto gap-1.5" onClick={() => setNewProductOpen(true)}>
+        <Button variant="outline" size="sm" className="ms-auto gap-1.5" onClick={openAddProduct}>
           <Plus size={14} />
           {t("New product", "صنف جديد")}
         </Button>
@@ -276,28 +400,153 @@ export function ProductSpecsTab({ products, onProductsChanged }: {
         )}
       </p>
 
-      <Dialog open={newProductOpen} onOpenChange={(o) => !o && setNewProductOpen(false)}>
+      {/* ── Parameter (test) catalog — plant-wide, not per-product ── */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+          <div>
+            <h3 className="font-semibold text-slate-900 flex items-center gap-1.5">
+              <SlidersHorizontal size={15} className="text-slate-400" />
+              {t("Parameter Catalog", "كتالوج المعايير")}
+            </h3>
+            <p className="text-xs text-slate-400">
+              {t(
+                "Tests and their plant-wide defaults, used by every product unless overridden above.",
+                "الفحوصات وحدودها الافتراضية العامة، تُستخدم لكل الأصناف ما لم تُستثنَ أعلاه."
+              )}
+            </p>
+          </div>
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={openAddParam}>
+            <Plus size={14} />
+            {t("Add", "إضافة")}
+          </Button>
+        </div>
+        {paramError && (
+          <p className="text-sm text-red-600 bg-red-50 border-b border-red-200 px-4 py-2">{paramError}</p>
+        )}
+        <div className="divide-y divide-slate-100">
+          {parameters.map((p) => (
+            <div key={p._id} className="flex items-center justify-between gap-2 px-4 py-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium truncate text-slate-800">
+                  {(lang === "ar" && p.nameAr) || p.name}{p.unit ? ` (${p.unit})` : ""}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {LAB_OPERATOR_LABELS[p.operator][lang]}
+                  {(p.defaultMin != null || p.defaultMax != null) && ` — ${p.defaultMin ?? "–"} to ${p.defaultMax ?? "–"}`}
+                  {p.defaultTarget != null && ` · ${t("target", "الهدف")} ${p.defaultTarget}`}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button onClick={() => openEditParam(p)} className="text-xs text-sky-600 hover:underline cursor-pointer">
+                  {t("Edit", "تعديل")}
+                </button>
+                <button onClick={() => removeParam(p)} className="text-xs text-red-500 hover:underline cursor-pointer">
+                  {t("Remove", "إزالة")}
+                </button>
+              </div>
+            </div>
+          ))}
+          {parameters.length === 0 && (
+            <p className="text-sm text-slate-400 py-6 text-center">{t("No parameters yet.", "لا توجد معايير بعد.")}</p>
+          )}
+        </div>
+      </div>
+
+      <Dialog open={productDialogOpen} onOpenChange={(o) => { if (!o) { setProductDialogOpen(false); setEditingProduct(null); } }}>
         <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>{t("New product", "صنف جديد")}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>{editingProduct ? t("Rename product", "إعادة تسمية الصنف") : t("New product", "صنف جديد")}</DialogTitle>
+          </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5">
               <Label>{t("Name", "الاسم")} *</Label>
-              <Input value={newProduct.name} onChange={(e) => setNewProduct((p) => ({ ...p, name: e.target.value }))} />
+              <Input value={productForm.name} onChange={(e) => setProductForm((p) => ({ ...p, name: e.target.value }))} />
             </div>
             <div className="space-y-1.5">
               <Label>{t("Arabic name", "الاسم بالعربية")}</Label>
-              <Input value={newProduct.nameAr} onChange={(e) => setNewProduct((p) => ({ ...p, nameAr: e.target.value }))} />
+              <Input value={productForm.nameAr} onChange={(e) => setProductForm((p) => ({ ...p, nameAr: e.target.value }))} />
             </div>
             {productError && (
               <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{productError}</p>
             )}
           </div>
           <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setNewProductOpen(false)} disabled={productSaving}>
+            <Button variant="outline" onClick={() => { setProductDialogOpen(false); setEditingProduct(null); }} disabled={productSaving}>
               {t("Cancel", "إلغاء")}
             </Button>
-            <Button onClick={createProduct} disabled={productSaving || !newProduct.name.trim()}>
-              {productSaving ? t("Saving…", "جارٍ الحفظ…") : t("Create", "إنشاء")}
+            <Button onClick={saveProduct} disabled={productSaving || !productForm.name.trim()}>
+              {productSaving
+                ? t("Saving…", "جارٍ الحفظ…")
+                : editingProduct ? t("Save", "حفظ") : t("Create", "إنشاء")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={paramDialogOpen} onOpenChange={(o) => { if (!o) { setParamDialogOpen(false); setEditingParam(null); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editingParam ? t("Edit parameter", "تعديل معيار") : t("Add parameter", "إضافة معيار")}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5 col-span-2">
+                <Label>{t("Name", "الاسم")} *</Label>
+                <Input value={paramForm.name} onChange={(e) => setParamForm((f) => ({ ...f, name: e.target.value }))}
+                  placeholder="e.g. Moisture" />
+              </div>
+              <div className="space-y-1.5 col-span-2">
+                <Label>{t("Arabic name", "الاسم بالعربية")}</Label>
+                <Input value={paramForm.nameAr} onChange={(e) => setParamForm((f) => ({ ...f, nameAr: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>{t("Unit", "الوحدة")}</Label>
+                <Input value={paramForm.unit} onChange={(e) => setParamForm((f) => ({ ...f, unit: e.target.value }))} placeholder="%" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>{t("Rule", "القاعدة")}</Label>
+                <Combobox
+                  triggerClassName={SELECT_CLASS + " w-full"}
+                  value={paramForm.operator}
+                  onChange={(v) => setParamForm((f) => ({ ...f, operator: v as LabOperator }))}
+                  options={(["n_m_t", "n_l_t", "range", "none"] as const).map((op) => ({
+                    value: op, label: LAB_OPERATOR_LABELS[op][lang],
+                  }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>{t("Default min", "الأدنى الافتراضي")}</Label>
+                <Input type="number" step="any" value={paramForm.defaultMin}
+                  onChange={(e) => setParamForm((f) => ({ ...f, defaultMin: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>{t("Default max", "الأعلى الافتراضي")}</Label>
+                <Input type="number" step="any" value={paramForm.defaultMax}
+                  onChange={(e) => setParamForm((f) => ({ ...f, defaultMax: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>{t("Default target", "الهدف الافتراضي")}</Label>
+                <Input type="number" step="any" value={paramForm.defaultTarget}
+                  onChange={(e) => setParamForm((f) => ({ ...f, defaultTarget: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>{t("Display order", "ترتيب العرض")}</Label>
+                <Input type="number" value={paramForm.order}
+                  onChange={(e) => setParamForm((f) => ({ ...f, order: e.target.value }))} />
+              </div>
+            </div>
+            {paramError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{paramError}</p>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => { setParamDialogOpen(false); setEditingParam(null); }} disabled={paramSaving}>
+              {t("Cancel", "إلغاء")}
+            </Button>
+            <Button onClick={saveParam} disabled={paramSaving || !paramForm.name.trim()}>
+              {paramSaving
+                ? t("Saving…", "جارٍ الحفظ…")
+                : editingParam ? t("Save", "حفظ") : t("Add", "إضافة")}
             </Button>
           </DialogFooter>
         </DialogContent>
