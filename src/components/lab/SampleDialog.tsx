@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
-import { Paperclip, X } from "lucide-react";
+import { Paperclip, X, AlertTriangle } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -17,7 +17,7 @@ import { toDateInputValue } from "@/lib/utils";
 import {
   LAB_SHIFT_LABELS, LAB_DECISION_LABELS,
   type ILabProduct, type ILabCustomer, type ILabProductSpec,
-  type ILabSample, type LabStatus,
+  type ILabSample, type ILabAttachment, type LabStatus,
 } from "@/types";
 
 const SELECT_CLASS =
@@ -75,6 +75,7 @@ export function SampleDialog({
 
   const [specs, setSpecs] = useState<ILabProductSpec[]>([]);
   const [specsLoading, setSpecsLoading] = useState(false);
+  const [existingAttachments, setExistingAttachments] = useState<ILabAttachment[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -96,6 +97,7 @@ export function SampleDialog({
       setValues(
         Object.fromEntries(editing.results.map((r) => [r.parameterId, String(r.value)]))
       );
+      setExistingAttachments(editing.attachments ?? []);
     } else {
       setProductId(prefill?.productId ?? "");
       setCustomerId(prefill?.customerId ?? "");
@@ -103,8 +105,19 @@ export function SampleDialog({
       setShift(""); setBatchId(""); setNotes("");
       setDecision("pending"); setDecisionNote("");
       setValues({});
+      setExistingAttachments([]);
     }
   }, [open, editing, prefill]);
+
+  /** Best-effort — the sample's own attachment list is refreshed from the
+   *  server's response the next time the dialog opens regardless, so a
+   *  failed delete here just means the user retries, not a corrupted view. */
+  const removeExistingAttachment = async (attachmentId?: string) => {
+    if (!editing || !attachmentId) return;
+    if (!window.confirm(t("Remove this file?", "إزالة هذا الملف؟"))) return;
+    setExistingAttachments((prev) => prev.filter((a) => a._id !== attachmentId));
+    await fetch(`/api/lab/samples/${editing._id}/attachments/${attachmentId}`, { method: "DELETE" });
+  };
 
   // The spec sheet is per product — changing the product changes every limit.
   useEffect(() => {
@@ -141,6 +154,16 @@ export function SampleDialog({
   const overall = entered.length
     ? rollUpStatus(entered.map((p) => p.status as LabStatus))
     : null;
+  const counts = {
+    pass: entered.filter((p) => p.status === "pass").length,
+    warning: entered.filter((p) => p.status === "warning").length,
+    fail: entered.filter((p) => p.status === "fail").length,
+  };
+
+  // Shown persistently while the form is open, not just sprung as a confirm()
+  // at save time — a technician should see the "is this a typo?" flag as soon
+  // as they type it, not after they've already reached for Save.
+  const implausible = entered.filter((p) => isImplausible(p.value as number, p.spec));
 
   const handleSave = useCallback(async () => {
     if (!productId) { setError(t("Choose a product.", "اختر الصنف.")); return; }
@@ -151,9 +174,8 @@ export function SampleDialog({
 
     // Non-blocking: an out-of-spec reading is exactly what this system exists to
     // record. Only ask about values that look like a typing slip.
-    const suspicious = entered.filter((p) => isImplausible(p.value as number, p.spec));
-    if (suspicious.length) {
-      const list = suspicious.map((p) => `${p.spec.name} = ${p.value}`).join("\n");
+    if (implausible.length) {
+      const list = implausible.map((p) => `${p.spec.name} = ${p.value}`).join("\n");
       const ok = window.confirm(
         t(
           `These readings look far outside the usual range — a mistyped decimal?\n\n${list}\n\nSave them as entered?`,
@@ -216,7 +238,7 @@ export function SampleDialog({
     onSaved(saved);
     onClose();
   }, [
-    productId, customerId, sampleDate, shift, batchId, notes, entered, files,
+    productId, customerId, sampleDate, shift, batchId, notes, entered, implausible, files,
     editing, decision, decisionNote, canSignOff, onSaved, onClose, t,
   ]);
 
@@ -300,6 +322,7 @@ export function SampleDialog({
               <Label>{t("Readings", "القراءات")}</Label>
               {overall && (
                 <span className="flex items-center gap-2 text-xs text-slate-500">
+                  {counts.pass} {t("ok", "مطابق")} · {counts.warning} {t("warning", "تحذير")} · {counts.fail} {t("out of range", "خارج النطاق")}
                   {t("Live verdict", "الحكم اللحظي")}
                   <QcStatusBadge status={overall} />
                 </span>
@@ -314,47 +337,71 @@ export function SampleDialog({
               <p className="text-sm text-slate-400 p-4 text-center">{t("Loading…", "جارٍ التحميل…")}</p>
             ) : (
               <div className="border border-slate-200 rounded-lg overflow-hidden divide-y divide-slate-100">
-                {preview.map(({ spec, value, status, deviation }) => (
-                  <div key={spec.parameterId} className="flex items-center gap-3 px-3 py-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm text-slate-800 truncate">
-                        {(lang === "ar" && spec.nameAr) || spec.name}
-                        {spec.unit && <span className="text-slate-400"> ({spec.unit})</span>}
-                      </div>
-                      <bdi className="text-xs text-slate-400 block">
-                        {spec.min != null && spec.max != null
-                          ? `${spec.min} – ${spec.max}`
-                          : spec.max != null ? `≤ ${spec.max}`
-                          : spec.min != null ? `≥ ${spec.min}`
-                          : t("no limit", "بدون حد")}
-                        {spec.target != null && ` · ${t("target", "الهدف")} ${spec.target}`}
-                      </bdi>
-                    </div>
-                    <Input
-                      type="number"
-                      step="any"
-                      inputMode="decimal"
-                      className="w-28 h-9 text-end tabular-nums"
-                      value={values[spec.parameterId] ?? ""}
-                      onChange={(e) =>
-                        setValues((v) => ({ ...v, [spec.parameterId]: e.target.value }))
+                {preview.map(({ spec, value, status, deviation }) => {
+                  const isImplausibleValue = value !== null && isImplausible(value, spec);
+                  return (
+                    <div
+                      key={spec.parameterId}
+                      className={
+                        "flex items-center gap-3 px-3 py-2 " +
+                        (status === "fail" ? "bg-red-50/40" : status === "warning" ? "bg-amber-50/40" : "")
                       }
-                    />
-                    <div className="w-28 flex justify-end">
-                      {value !== null && status && (
-                        <span className="flex items-center gap-1.5">
-                          {deviation !== null && (
-                            <bdi className="text-xs text-slate-400 tabular-nums">
-                              {deviation > 0 ? "+" : ""}{(deviation * 100).toFixed(1)}%
-                            </bdi>
-                          )}
-                          <QcStatusBadge status={status} size="xs" />
-                        </span>
-                      )}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm text-slate-800 truncate">
+                          {(lang === "ar" && spec.nameAr) || spec.name}
+                          {spec.unit && <span className="text-slate-400"> ({spec.unit})</span>}
+                        </div>
+                        <bdi className="text-xs text-slate-400 block">
+                          {spec.min != null && spec.max != null
+                            ? `${spec.min} – ${spec.max}`
+                            : spec.max != null ? `≤ ${spec.max}`
+                            : spec.min != null ? `≥ ${spec.min}`
+                            : t("no limit", "بدون حد")}
+                          {spec.target != null && ` · ${t("target", "الهدف")} ${spec.target}`}
+                        </bdi>
+                      </div>
+                      <Input
+                        type="number"
+                        step="any"
+                        inputMode="decimal"
+                        className={
+                          "w-28 h-9 text-end tabular-nums " +
+                          (status === "fail" ? "border-red-400 focus-visible:ring-red-400"
+                            : status === "warning" ? "border-amber-400 focus-visible:ring-amber-400"
+                            : status === "pass" ? "border-green-400 focus-visible:ring-green-400" : "")
+                        }
+                        value={values[spec.parameterId] ?? ""}
+                        onChange={(e) =>
+                          setValues((v) => ({ ...v, [spec.parameterId]: e.target.value }))
+                        }
+                      />
+                      <div className="w-28 flex justify-end">
+                        {value !== null && status && (
+                          <span className="flex items-center gap-1.5">
+                            {deviation !== null && (
+                              <bdi className="text-xs text-slate-400 tabular-nums">
+                                {deviation > 0 ? "+" : ""}{(deviation * 100).toFixed(1)}%
+                              </bdi>
+                            )}
+                            <QcStatusBadge status={status} size="xs" />
+                            {isImplausibleValue && <AlertTriangle size={13} className="text-amber-500" />}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
+            )}
+            {implausible.length > 0 && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mt-2 flex items-start gap-1.5">
+                <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                {t(
+                  `${implausible.length} value(s) are far outside the normal range — double-check for a typo.`,
+                  `${implausible.length} قيمة بعيدة جدًا عن النطاق الطبيعي — تأكد من عدم وجود خطأ إدخال.`
+                )}
+              </p>
             )}
           </div>
 
@@ -371,15 +418,42 @@ export function SampleDialog({
             <input
               type="file"
               multiple
-              onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+              onChange={(e) => {
+                // Accumulate rather than replace — picking files twice (once
+                // now, once more after noticing you forgot one) shouldn't
+                // silently drop the first batch. Reset the input's own value
+                // so choosing the exact same file again still fires onChange.
+                setFiles((prev) => [...prev, ...Array.from(e.target.files ?? [])]);
+                e.target.value = "";
+              }}
               className="block w-full text-sm text-slate-500 file:me-3 file:py-1.5 file:px-3 file:rounded-lg file:border file:border-slate-200 file:text-sm file:bg-white hover:file:bg-slate-50 file:cursor-pointer"
             />
-            {files.length > 0 && (
-              <ul className="text-xs text-slate-500 space-y-0.5 pt-1">
-                {files.map((f) => (
-                  <li key={f.name} className="flex items-center gap-1.5">
-                    <Paperclip size={11} />
-                    <span className="truncate">{f.name}</span>
+            {(existingAttachments.length > 0 || files.length > 0) && (
+              <ul className="text-xs space-y-1 pt-1">
+                {existingAttachments.map((a) => (
+                  <li key={a._id} className="flex items-center justify-between gap-2 bg-slate-50 rounded px-2 py-1.5">
+                    <a href={a.url} target="_blank" rel="noopener noreferrer"
+                      className="text-sky-600 hover:underline truncate flex items-center gap-1.5 min-w-0">
+                      <Paperclip size={11} className="shrink-0" />
+                      <span className="truncate">{a.fileName}</span>
+                    </a>
+                    <button type="button" onClick={() => removeExistingAttachment(a._id)}
+                      className="text-red-500 hover:underline cursor-pointer shrink-0">
+                      {t("Remove", "إزالة")}
+                    </button>
+                  </li>
+                ))}
+                {files.map((f, i) => (
+                  <li key={`${f.name}-${i}`} className="flex items-center justify-between gap-2 bg-sky-50 rounded px-2 py-1.5">
+                    <span className="text-slate-600 truncate flex items-center gap-1.5 min-w-0">
+                      <Paperclip size={11} className="shrink-0" />
+                      <span className="truncate">{f.name}</span>
+                      <span className="text-slate-400 shrink-0">({t("not uploaded yet", "لم يُرفع بعد")})</span>
+                    </span>
+                    <button type="button" onClick={() => setFiles((p) => p.filter((_, idx) => idx !== i))}
+                      className="text-red-500 hover:underline cursor-pointer shrink-0">
+                      {t("Remove", "إزالة")}
+                    </button>
                   </li>
                 ))}
               </ul>
