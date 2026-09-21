@@ -1,8 +1,9 @@
 "use client";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  AlertTriangle, ArrowRight, Clock, FlaskConical, Inbox, PackageCheck,
-  Scale, UserCheck, XCircle, TrendingUp, TrendingDown, Minus,
+  AlertTriangle, ArrowRight, ArrowLeft, Clock, FlaskConical, Inbox, PackageCheck,
+  Scale, UserCheck, TrendingUp, TrendingDown, Minus,
 } from "lucide-react";
 import { useLang } from "@/components/layout/AppShell";
 import { QcStatusBadge } from "@/components/ui/qc-status-badge";
@@ -39,9 +40,13 @@ export function Card({
   children: React.ReactNode;
 }) {
   return (
+    // `h-full flex flex-col` + the content area's `flex-1` is what lets a
+    // grid row of these actually equalize: the grid item stretches (parent
+    // must use `items-stretch`, not `items-start`), and the card itself then
+    // passes that stretched height down instead of shrinking to its content.
     <section
       className={
-        "rounded-xl border shadow-sm " +
+        "rounded-xl border shadow-sm h-full flex flex-col " +
         (tone === "alert" ? "bg-amber-50/60 border-amber-200" : "bg-white border-slate-200")
       }
     >
@@ -52,7 +57,7 @@ export function Card({
         </h2>
         {action}
       </div>
-      <div className="p-4">{children}</div>
+      <div className="p-4 flex-1">{children}</div>
     </section>
   );
 }
@@ -250,34 +255,82 @@ export function Pipeline({
   );
 }
 
-// ── D · Stuck orders ───────────────────────────────────────────────────────
+// ── D · Overdue orders ──────────────────────────────────────────────────────
+const STUCK_PAGE_SIZE = 5;
+
+/**
+ * A real paginated list, not a full-width banner — it lives as one column in
+ * a fixed three-up row (with Pipeline and Volume trend), so it always renders
+ * something in that slot rather than disappearing when nothing is overdue.
+ * Pagination is client-side over the rows the API already fetched (capped
+ * server-side — see `dashboard/route.ts`); a residual note covers the rare
+ * case where the true total exceeds that cap.
+ */
 export function Stuck({ data }: { data: { rows: OrderLite[]; total: number; hours: number } }) {
   const { lang, t } = useLang();
-  // Absent entirely when nothing is stuck. An empty alert box is how people
-  // learn to stop reading alert boxes.
-  if (!data.total) return null;
+  const [page, setPage] = useState(0);
+
+  const pageCount = Math.max(1, Math.ceil(data.rows.length / STUCK_PAGE_SIZE));
+  const shown = data.rows.slice(page * STUCK_PAGE_SIZE, (page + 1) * STUCK_PAGE_SIZE);
+  const days = data.hours / 24;
 
   return (
     <Card
-      tone="alert"
-      title={t(
-        `${data.total} order(s) waiting more than ${data.hours / 24} days`,
-        `${data.total} طلبية منتظرة منذ أكثر من ${data.hours / 24} يوم`
-      )}
+      title={t("Overdue orders", "الطلبيات المتأخرة")}
       icon={<AlertTriangle size={16} className="text-amber-600" />}
     >
-      <div className="divide-y divide-amber-100">
-        {data.rows.map((o) => (
-          <div key={o._id} className="py-1.5">
-            <OrderLine o={o} />
-            <p className="text-xs text-amber-800 px-2">
-              {t("On", "عند")}{" "}
-              {ROLE_LABELS[(SALES_STAGES.find((s) => s.index === o.currentStageIndex)?.role ?? "") as UserRole]?.[lang] ?? ""}
-            </p>
+      {!data.total ? (
+        <Empty>
+          {t(
+            `Nothing has waited more than ${days} day(s).`,
+            `لا توجد طلبية انتظرت أكثر من ${days} يوم.`
+          )}
+        </Empty>
+      ) : (
+        <>
+          <p className="text-xs text-slate-500 mb-2">
+            {t(
+              `${data.total} order(s) waiting more than ${days} day(s)`,
+              `${data.total} طلبية منتظرة منذ أكثر من ${days} يوم`
+            )}
+          </p>
+          <div className="divide-y divide-slate-100">
+            {shown.map((o) => (
+              <div key={o._id} className="py-1.5">
+                <OrderLine o={o} />
+                <p className="text-xs text-amber-800 px-2">
+                  {t("On", "عند")}{" "}
+                  {ROLE_LABELS[(SALES_STAGES.find((s) => s.index === o.currentStageIndex)?.role ?? "") as UserRole]?.[lang] ?? ""}
+                </p>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
-      <More n={data.total - data.rows.length} href="/orders" t={t} />
+
+          {pageCount > 1 && (
+            <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100">
+              <button
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                disabled={page === 0}
+                className="w-7 h-7 grid place-items-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+              >
+                {lang === "ar" ? <ArrowRight size={14} /> : <ArrowLeft size={14} />}
+              </button>
+              <span className="text-xs text-slate-400 tabular-nums">
+                {t(`Page ${page + 1} of ${pageCount}`, `صفحة ${page + 1} من ${pageCount}`)}
+              </span>
+              <button
+                onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+                disabled={page >= pageCount - 1}
+                className="w-7 h-7 grid place-items-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+              >
+                {lang === "ar" ? <ArrowLeft size={14} /> : <ArrowRight size={14} />}
+              </button>
+            </div>
+          )}
+
+          <More n={data.total - data.rows.length} href="/orders" t={t} />
+        </>
+      )}
     </Card>
   );
 }
@@ -352,63 +405,37 @@ export function ThisMonth({ data }: { data: { current: Period; previous: Period 
   );
 }
 
-// ── F · Rejections ─────────────────────────────────────────────────────────
-export function Rejections({
-  data,
-}: { data: { recent: OrderLite[]; byStage: { _id: number | null; count: number; kg: number }[] } }) {
-  const { lang, t } = useLang();
-  const router = useRouter();
-  const peak = Math.max(1, ...data.byStage.map((s) => s.count));
+/**
+ * Same four numbers as `ThisMonth`, stacked in one narrow column instead of a
+ * 4-up grid — for the 20% slot beside the quality/product-mix charts, where a
+ * horizontal grid would be squeezed into unreadable widths.
+ */
+export function ThisMonthCompact({ data }: { data: { current: Period; previous: Period } }) {
+  const { t } = useLang();
+  const c = data.current, p = data.previous;
+  const hrs = (h: number | null) =>
+    h === null ? "—" : h >= 48 ? `${Math.round(h / 24)} ${t("d", "ي")}` : `${Math.round(h)} ${t("h", "س")}`;
+
+  const cells = [
+    { label: t("Posted", "مرحّلة"), value: c.postedCount, delta: <Delta now={c.postedCount} before={p.postedCount} /> },
+    { label: t("Tons posted", "الأطنان المرحّلة"), value: (c.postedKg / 1000).toFixed(1), delta: <Delta now={c.postedKg} before={p.postedKg} /> },
+    { label: t("Rejected", "مرفوضة"), value: c.rejectedCount, delta: <Delta now={c.rejectedCount} before={p.rejectedCount} higherIsBetter={false} /> },
+    { label: t("Order to posted", "من الإنشاء إلى الترحيل"), value: hrs(c.avgHours), delta: null },
+  ];
 
   return (
-    <Card
-      title={t("Where orders die", "أين تتوقّف الطلبيات")}
-      icon={<XCircle size={16} className="text-red-500" />}
-      action={
-        <button onClick={() => router.push("/rejections")} className="text-xs text-sky-700 hover:text-sky-900 cursor-pointer">
-          {t("All", "الكل")}
-        </button>
-      }
-    >
-      {data.recent.length === 0 ? (
-        <Empty>{t("No orders have been rejected.", "لا توجد طلبيات مرفوضة.")}</Empty>
-      ) : (
-        <>
-          <div className="space-y-1 mb-3">
-            {data.byStage.map((s) => (
-              <div key={String(s._id)} className="flex items-center gap-2">
-                <span className="text-xs w-32 truncate text-slate-600">{stageName(s._id ?? undefined, lang)}</span>
-                <span className="flex-1 h-3 bg-slate-100 rounded-sm overflow-hidden">
-                  <span className="block h-full bg-red-500 rounded-sm" style={{ width: `${(s.count / peak) * 100}%` }} />
-                </span>
-                <bdi className="text-xs tabular-nums text-slate-700 w-6 text-end">{s.count}</bdi>
-              </div>
-            ))}
+    <Card title={t("This month", "هذا الشهر")} icon={<TrendingUp size={16} className="text-slate-500" />}>
+      <div className="flex flex-col divide-y divide-slate-100">
+        {cells.map((cell, i) => (
+          <div key={i} className="py-2.5 first:pt-0 last:pb-0">
+            <p className="text-xs text-slate-500">{cell.label}</p>
+            <p className="text-xl font-semibold text-slate-900 tabular-nums flex items-baseline gap-1.5">
+              <bdi>{cell.value}</bdi>
+              {cell.delta}
+            </p>
           </div>
-          <ul className="divide-y divide-slate-100">
-            {data.recent.map((o) => (
-              <li
-                key={o._id}
-                onClick={() => router.push(`/orders/${o._id}`)}
-                className="py-2 cursor-pointer hover:bg-slate-50 rounded px-2 -mx-2"
-              >
-                <div className="flex items-baseline gap-2">
-                  <bdi className="font-mono text-xs text-red-700">{o.orderNumber}</bdi>
-                  <span className="text-sm text-slate-700 truncate">
-                    {((lang === "ar" && o.customerAr) || o.customer) || ""}
-                  </span>
-                  <bdi className="text-xs text-slate-400 ms-auto">{formatDate(o.updatedAt)}</bdi>
-                </div>
-                {o.rejection?.reason && (
-                  <p className="text-xs text-slate-500 truncate">
-                    {o.rejection.byName} — {o.rejection.reason}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
+        ))}
+      </div>
     </Card>
   );
 }

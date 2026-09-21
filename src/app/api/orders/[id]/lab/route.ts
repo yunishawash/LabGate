@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongoose";
 import { requireModule } from "@/lib/requireSession";
-import { badRequest, notFound, oid, readJson, str, conflict } from "@/lib/apiHelpers";
+import { badRequest, badStrictStr, notFound, oid, readJson, strictStr, conflict } from "@/lib/apiHelpers";
 import { visibilityFilter, andFilters, type Actor, type OrderLike } from "@/lib/salesWorkflow";
 import { resolveSlot, claimAndAdvance } from "@/lib/salesTransition";
 import { rollUpStatus, type LabStatus } from "@/lib/labQc";
@@ -52,6 +52,13 @@ export async function POST(req: NextRequest, { params }: Params) {
   }
   if (sampleIds.length !== rawIds.length) return badRequest("Invalid sample id");
   if (sampleIds.length > 20) return badRequest("Too many samples for one order");
+
+  // Validated once, up front — before the sample-linking writes below — and
+  // reused both in the audit note (partial-coverage path) and the step note
+  // (completing path), instead of calling this twice against two different
+  // silent-truncation points on the same input.
+  const noteCheck = strictStr(body?.note, 2000, "Note");
+  if (!noteCheck.ok) return badStrictStr(noteCheck);
 
   const actor: Actor = { id: String(userDoc._id), role: userDoc.role };
 
@@ -157,7 +164,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       performedByName: userDoc.name,
       notes:
         `${newSamples.length} sample(s) linked — ${coveredProductIds.size}/${requiredProducts.size} products tested` +
-        (str(body?.note, 1000) ? ` — ${str(body?.note, 1000)}` : ""),
+        (noteCheck.value ? ` — ${noteCheck.value}` : ""),
     });
 
     const fresh = await SalesOrder.findById(id).lean();
@@ -175,7 +182,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     id,
     slot.stage,
     { _id: userDoc._id, name: userDoc.name },
-    { actedAs: slot.actedAs, actedForRole: slot.actedForRole, note: str(body?.note, 1000) }
+    { actedAs: slot.actedAs, actedForRole: slot.actedForRole, note: noteCheck.value }
   );
 
   if ("code" in result) {

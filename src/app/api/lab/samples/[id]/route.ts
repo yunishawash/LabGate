@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongoose";
 import { requireRole, requireSession } from "@/lib/requireSession";
-import { badRequest, notFound, oid, readJson, str, oneOf } from "@/lib/apiHelpers";
+import { badRequest, badStrictStr, notFound, oid, readJson, str, strictStr, oneOf } from "@/lib/apiHelpers";
 import LabSample from "@/models/LabSample";
 import LabProduct from "@/models/LabProduct";
 import LabCustomer from "@/models/LabCustomer";
@@ -73,7 +73,11 @@ export async function PUT(req: NextRequest, { params }: Params) {
   }
   if ("shift" in body) update.shift = oneOf(body.shift, LAB_SHIFTS, "");
   if ("batchId" in body) update.batchId = str(body.batchId, 80);
-  if ("notes" in body) update.notes = str(body.notes, 2000);
+  if ("notes" in body) {
+    const notesCheck = strictStr(body.notes, 5000, "Notes");
+    if (!notesCheck.ok) return badStrictStr(notesCheck);
+    update.notes = notesCheck.value;
+  }
 
   // Re-score whenever readings change, against whichever product now applies.
   let newOverall: string | null = null;
@@ -99,8 +103,10 @@ export async function PUT(req: NextRequest, { params }: Params) {
   const canDecide = userDoc.role === "admin" || userDoc.role === "technical_manager";
   if ("finalDecision" in body && canDecide) {
     const decision = oneOf(body.finalDecision, LAB_DECISIONS, "pending");
+    const decisionNoteCheck = strictStr(body.finalDecisionNote, 2000, "Sign-off note");
+    if (!decisionNoteCheck.ok) return badStrictStr(decisionNoteCheck);
     update.finalDecision = decision;
-    update.finalDecisionNote = str(body.finalDecisionNote, 1000);
+    update.finalDecisionNote = decisionNoteCheck.value;
     update.finalDecisionById = decision === "pending" ? null : userDoc._id;
     update.finalDecisionByName = decision === "pending" ? "" : userDoc.name;
     update.finalDecisionAt = decision === "pending" ? null : new Date();

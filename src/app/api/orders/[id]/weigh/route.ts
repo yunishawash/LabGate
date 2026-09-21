@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongoose";
 import { requireModule } from "@/lib/requireSession";
-import { badRequest, notFound, oid, readJson, str, conflict } from "@/lib/apiHelpers";
+import { badRequest, badStrictStr, notFound, oid, readJson, strictStr, conflict } from "@/lib/apiHelpers";
 import { notifyPosted } from "@/lib/salesNotify";
 import { visibilityFilter, andFilters, type Actor, type OrderLike } from "@/lib/salesWorkflow";
 import { liveDelegationRoles } from "@/lib/salesAuth";
@@ -30,6 +30,11 @@ export async function POST(
   if (!Number.isFinite(actualNetWeightKg) || actualNetWeightKg <= 0) {
     return badRequest("A positive net weight is required");
   }
+  // One textarea, but the value is written into two schema locations — the
+  // step's own note and the order-level `weighNote` — so it is validated
+  // once here and reused, not re-checked against two different caps.
+  const noteCheck = strictStr(body?.note, 2000, "Note");
+  if (!noteCheck.ok) return badStrictStr(noteCheck);
 
   const actor: Actor = { id: String(userDoc._id), role: userDoc.role };
   const delegated = await liveDelegationRoles(actor.id);
@@ -64,12 +69,12 @@ export async function POST(
     {
       actedAs: slot.actedAs,
       actedForRole: slot.actedForRole,
-      note: str(body?.note, 500),
+      note: noteCheck.value,
       extraSet: {
         actualNetWeightKg,
         varianceKg,
         variancePct,
-        weighNote: str(body?.note, 500),
+        weighNote: noteCheck.value,
         weighedById: userDoc._id,
         weighedByName: userDoc.name,
       },

@@ -1,16 +1,20 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, ClipboardList, FlaskConical, History, ListTree, Pencil } from "lucide-react";
+import { ArrowLeft, ArrowRight, ClipboardList, Eye, FlaskConical, History, ListTree, Pencil, Printer } from "lucide-react";
 import { useLang } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { formatDate, formatDateTime } from "@/lib/utils";
-import { ORDER_STATUS_LABELS, ORDER_STATUS_BADGE, type ILabCustomer } from "@/types";
+import { ORDER_STATUS_LABELS, ORDER_STATUS_BADGE, type ILabCustomer, type ILabSample } from "@/types";
 import { ApprovalTimeline } from "@/components/orders/ApprovalTimeline";
 import { ActionPanel } from "@/components/orders/ActionPanel";
+import { CollectionsPackingPanel } from "@/components/orders/CollectionsPackingPanel";
 import { OrderDialog } from "@/components/orders/OrderDialog";
 import { LabStepDialog } from "@/components/orders/LabStepDialog";
 import { QcStatusBadge } from "@/components/ui/qc-status-badge";
+import { DecisionBadge } from "@/components/ui/decision-badge";
 import { SALES_STAGES } from "@/lib/salesWorkflow";
 import type { OrderRow } from "@/components/orders/cells";
 
@@ -23,9 +27,17 @@ interface OrderDetail extends OrderRow {
   createdAt?: string;
   postedAt?: string | null;
   weighNote?: string;
+  customerAddress?: string;
+  salesRepName?: string;
+  agentName?: string;
+  paymentMethod?: "cash" | "deferred" | "";
+  totalBonusBags?: number;
+  totalBonusWeightKg?: number;
+  collections?: { note?: string; byName?: string; at?: string | null };
+  packing?: { note?: string; byName?: string; at?: string | null };
   lines: {
     productId: string; product: string; productAr?: string;
-    bagWeightKg: number; bagCount: number; lineWeightKg: number; note?: string;
+    bagWeightKg: number; bagCount: number; lineWeightKg: number; note?: string; bonusBags?: number;
   }[];
   /** Samples attached to this order so far — one entry per sample, however
    *  many of the order's products they collectively cover. */
@@ -174,12 +186,22 @@ export default function OrderDetailPage() {
             )}
           </p>
         </div>
-        {canEdit && (
-          <Button variant="outline" className="gap-2" onClick={() => setEditOpen(true)}>
-            <Pencil size={15} />
-            {t("Edit", "تعديل")}
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            className="gap-2"
+            onClick={() => window.open(`/api/orders/${order._id}/pdf`, "_blank")}
+          >
+            <Printer size={15} />
+            {t("Print (MS-SC/F7)", "طباعة (MS-SC/F7)")}
           </Button>
-        )}
+          {canEdit && (
+            <Button variant="outline" className="gap-2" onClick={() => setEditOpen(true)}>
+              <Pencil size={15} />
+              {t("Edit", "تعديل")}
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
@@ -220,6 +242,7 @@ export default function OrderDetailPage() {
 
         <div className="space-y-3">
           <ActionPanel order={order} onDone={load} />
+          <CollectionsPackingPanel order={order} onDone={load} />
 
           <aside className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-2 text-sm">
             <Row label={t("Raised by", "أنشأها")} value={order.createdByName || "—"} />
@@ -251,6 +274,9 @@ export default function OrderDetailPage() {
           orderDate: order.orderDate,
           deliveryDate: order.deliveryDate,
           notes: order.notes,
+          salesRepName: order.salesRepName,
+          agentName: order.agentName,
+          paymentMethod: order.paymentMethod,
           lines: order.lines,
         }}
       />
@@ -282,9 +308,9 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
  * display; coverage itself is decided server-side.
  */
 function coverageByProduct(labSamples: OrderDetail["labSamples"]) {
-  const map = new Map<string, { sampleNumber: string; overallStatus: string }>();
+  const map = new Map<string, { _id: string; sampleNumber: string; overallStatus: string }>();
   for (const s of labSamples ?? []) {
-    map.set(s.productId, { sampleNumber: s.sampleNumber, overallStatus: s.overallStatus });
+    map.set(s.productId, { _id: s._id, sampleNumber: s.sampleNumber, overallStatus: s.overallStatus });
   }
   return map;
 }
@@ -300,6 +326,31 @@ function LinesTable({
   // past it) — earlier in the chain there is nothing to show yet.
   const showLab = order.currentStageIndex >= 6 || (order.labSamples?.length ?? 0) > 0;
 
+  // The order-detail payload only ever carries a SUMMARY per sample (id,
+  // number, verdict) — see the comment on `labSamples` above and the
+  // matching `.select()` server-side. The full readings are fetched here,
+  // on demand, only when someone actually asks to see them.
+  const [viewingSample, setViewingSample] = useState<ILabSample | null>(null);
+  const [loadingSampleId, setLoadingSampleId] = useState<string | null>(null);
+  const [viewError, setViewError] = useState("");
+
+  const viewReadings = async (sampleId: string) => {
+    setLoadingSampleId(sampleId);
+    setViewError("");
+    try {
+      const res = await fetch(`/api/lab/samples/${sampleId}`);
+      if (!res.ok) {
+        setViewError(t("Could not load this sample.", "تعذّر تحميل هذه العيّنة."));
+        return;
+      }
+      setViewingSample(await res.json());
+    } catch {
+      setViewError(t("Network error — please try again.", "خطأ في الشبكة — يُرجى المحاولة مرة أخرى."));
+    } finally {
+      setLoadingSampleId(null);
+    }
+  };
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -310,7 +361,10 @@ function LinesTable({
             <th className="text-end font-medium py-2 px-3 whitespace-nowrap">{t("Bags", "الأكياس")}</th>
             <th className="text-end font-medium py-2 whitespace-nowrap">{t("Weight", "الوزن")}</th>
             {showLab && (
-              <th className="text-end font-medium py-2 ps-3 whitespace-nowrap">{t("Lab", "المختبر")}</th>
+              <>
+                <th className="text-end font-medium py-2 ps-3 whitespace-nowrap">{t("Lab", "المختبر")}</th>
+                <th className="text-end font-medium py-2 ps-3 whitespace-nowrap">{t("Actions", "إجراءات")}</th>
+              </>
             )}
           </tr>
         </thead>
@@ -329,25 +383,43 @@ function LinesTable({
                   {(l.lineWeightKg / 1000).toFixed(3)} {t("t", "طن")}
                 </td>
                 {showLab && (
-                  <td className="py-2 ps-3 text-end whitespace-nowrap">
-                    {c ? (
-                      <span className="inline-flex items-center gap-1.5 justify-end">
-                        <bdi className="font-mono text-xs text-slate-400">{c.sampleNumber}</bdi>
-                        <QcStatusBadge status={c.overallStatus} size="xs" />
-                      </span>
-                    ) : canEnterLab ? (
-                      <Button
-                        size="sm" variant="outline"
-                        className="h-7 gap-1.5 text-xs border-cyan-200 text-cyan-700 hover:bg-cyan-50"
-                        onClick={() => onTest(l.productId)}
-                      >
-                        <FlaskConical size={13} />
-                        {t("Enter sample", "إدخال عيّنة")}
-                      </Button>
-                    ) : (
-                      <span className="text-xs text-slate-300">—</span>
-                    )}
-                  </td>
+                  <>
+                    <td className="py-2 ps-3 text-end whitespace-nowrap">
+                      {c ? (
+                        <span className="inline-flex items-center gap-1.5 justify-end">
+                          <bdi className="font-mono text-xs text-slate-400">{c.sampleNumber}</bdi>
+                          <QcStatusBadge status={c.overallStatus} size="xs" />
+                        </span>
+                      ) : canEnterLab ? (
+                        <Button
+                          size="sm" variant="outline"
+                          className="h-7 gap-1.5 text-xs border-cyan-200 text-cyan-700 hover:bg-cyan-50"
+                          onClick={() => onTest(l.productId)}
+                        >
+                          <FlaskConical size={13} />
+                          {t("Enter sample", "إدخال عيّنة")}
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-slate-300">—</span>
+                      )}
+                    </td>
+                    <td className="py-2 ps-3 text-end whitespace-nowrap">
+                      {c ? (
+                        <button
+                          type="button"
+                          onClick={() => viewReadings(c._id)}
+                          disabled={loadingSampleId === c._id}
+                          title={t("View entered values", "عرض القيم المُدخلة")}
+                          aria-label={t("View entered values", "عرض القيم المُدخلة")}
+                          className="inline-flex items-center justify-center h-7 w-7 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700 disabled:opacity-50 cursor-pointer"
+                        >
+                          <Eye size={14} />
+                        </button>
+                      ) : (
+                        <span className="text-xs text-slate-300">—</span>
+                      )}
+                    </td>
+                  </>
                 )}
               </tr>
             );
@@ -361,10 +433,78 @@ function LinesTable({
             <td className="py-2 text-end tabular-nums whitespace-nowrap">
               {(order.totalWeightKg / 1000).toFixed(3)} {t("t", "طن")}
             </td>
-            {showLab && <td />}
+            {showLab && (
+              <>
+                <td />
+                <td />
+              </>
+            )}
           </tr>
         </tfoot>
       </table>
+
+      {viewError && (
+        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mt-3">
+          {viewError}
+        </p>
+      )}
+
+      {/* Read-only — this is "see what was entered", not a second place to
+          edit a sample. Editing stays on the Lab screen, where the scoring
+          rules and thresholds actually live. */}
+      <Dialog open={!!viewingSample} onOpenChange={(o) => !o && setViewingSample(null)}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {viewingSample?.sampleNumber}
+              {viewingSample && <QcStatusBadge status={viewingSample.overallStatus} />}
+              {viewingSample && viewingSample.finalDecision !== "pending" && (
+                <DecisionBadge decision={viewingSample.finalDecision} />
+              )}
+            </DialogTitle>
+          </DialogHeader>
+          {viewingSample && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <Label className="text-xs text-slate-500">{t("Date", "التاريخ")}</Label>
+                  <p>{formatDate(viewingSample.sampleDate)}</p>
+                </div>
+                <div>
+                  <Label className="text-xs text-slate-500">{t("Tested by", "الفاحص")}</Label>
+                  <p>{viewingSample.testedByName}</p>
+                </div>
+              </div>
+              <div className="border border-slate-200 rounded-lg overflow-hidden divide-y divide-slate-100">
+                {viewingSample.results.map((r) => (
+                  <div
+                    key={r.parameterId}
+                    className={
+                      "flex items-center justify-between gap-3 px-3 py-2 text-sm " +
+                      (r.status === "fail" ? "bg-red-50/40" : r.status === "warning" ? "bg-amber-50/40" : "")
+                    }
+                  >
+                    <span className="text-slate-700">
+                      {r.parameterName}
+                      {r.unit && <span className="text-slate-400"> ({r.unit})</span>}
+                    </span>
+                    <span className="flex items-center gap-2">
+                      <bdi className="tabular-nums font-medium text-slate-900">{r.value}</bdi>
+                      <QcStatusBadge status={r.status} size="xs" />
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {viewingSample.notes && (
+                <div>
+                  <Label className="text-xs text-slate-500">{t("Notes", "ملاحظات")}</Label>
+                  <p className="text-sm text-slate-700 whitespace-pre-wrap break-words">{viewingSample.notes}</p>
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -395,10 +535,16 @@ function HistoryList({
                   manager is showing them our schema, not their process. */}
               {e.field && <span className="text-slate-400"> · {stageLabel(e.field, lang)}</span>}
             </p>
-            <p className="text-xs text-slate-500">
-              {e.performedByName}
-              {e.notes && <span className="text-slate-400"> — {e.notes}</span>}
-            </p>
+            <p className="text-xs text-slate-500">{e.performedByName}</p>
+            {/* Its own line, not crammed inline after the actor's name with an
+             *  em dash — a rejection reason can run to 2000 characters, and
+             *  one unbroken line was exactly what made this unreadable AND
+             *  (via the table cell equivalent) forced the page to overflow. */}
+            {e.notes && (
+              <p className="text-xs text-slate-400 whitespace-pre-wrap break-words mt-0.5">
+                {e.notes}
+              </p>
+            )}
           </div>
         </li>
       ))}

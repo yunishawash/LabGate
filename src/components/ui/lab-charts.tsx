@@ -32,40 +32,43 @@ export const CHART = {
 
 export interface InSpecRow {
   label: string;
-  value: number;      // percentage 0..100
+  value: number;      // percentage, 0..scaleMax
   count: number;
 }
 
 /**
- * In-spec percentage per parameter.
+ * Shared renderer for both KPI bar charts (in-spec % and CV%) — one series of
+ * labelled, proportional bars.
  *
- * Deliberately NOT a charting library. Twelve labelled rows with a proportional
- * bar is a layout problem, not a plotting one — and building it in HTML fixes
- * three things Recharts made hard here:
+ * Deliberately NOT a charting library. Rows of labelled bars are a layout
+ * problem, not a plotting one — and building it in HTML fixes three things
+ * Recharts made hard here:
  *   · it mirrors for free under dir="rtl" (a Recharts YAxis with
  *     orientation="right" does not reserve its gutter, so the category labels
  *     were drawn on top of the bars);
  *   · Arabic labels render with the page's own font and shaping, not SVG text;
  *   · a 0% row still shows its label, without a minPointSize fudge.
- * Recharts stays for genuinely chart-shaped things — trends over time.
+ * Recharts stays for genuinely chart-shaped things — trends over time
+ * (lab-trend-chart.tsx).
  *
  * One series, so no legend box: the heading says what is plotted. Colour is a
  * STATUS band (see CHART), never a categorical palette, and every row carries
  * its value as text — which is also the relief the amber contrast warning
  * requires.
  */
-export function InSpecChart({ rows }: { rows: InSpecRow[]; height?: number }) {
-  const { t } = useLang();
-
+function MetricBarChart({
+  rows, scaleMax, bandColor, emptyMessage,
+}: {
+  rows: InSpecRow[];
+  scaleMax: number;
+  bandColor: (v: number) => string;
+  emptyMessage: string;
+}) {
   if (!rows.length) {
-    return (
-      <div className="h-40 grid place-items-center text-sm text-slate-400">
-        {t("Not enough readings yet.", "لا توجد قراءات كافية بعد.")}
-      </div>
-    );
+    return <div className="h-40 grid place-items-center text-sm text-slate-400">{emptyMessage}</div>;
   }
 
-  const bandColor = (v: number) => (v >= 95 ? CHART.pass : v >= 85 ? CHART.warning : CHART.fail);
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => Math.round(scaleMax * f));
 
   return (
     <div className="space-y-1.5">
@@ -75,8 +78,8 @@ export function InSpecChart({ rows }: { rows: InSpecRow[]; height?: number }) {
             {r.label}
           </div>
           <div className="flex-1 h-5 relative">
-            {/* Hairline gridlines at 25 / 50 / 75 / 100 — recessive, one step off
-                the surface, and they mirror with the container. */}
+            {/* Hairline gridlines at the quarter-marks — recessive, one step
+                off the surface, and they mirror with the container. */}
             <div className="absolute inset-0 flex justify-between pointer-events-none">
               {[0, 1, 2, 3, 4].map((n) => (
                 <span key={n} className="w-px h-full bg-slate-100" />
@@ -85,10 +88,10 @@ export function InSpecChart({ rows }: { rows: InSpecRow[]; height?: number }) {
             <div
               className="h-full rounded-e-[4px] transition-[width] duration-300"
               style={{
-                width: `${Math.max(r.value, 0.6)}%`,
+                width: `${Math.max(Math.min((r.value / scaleMax) * 100, 100), 0.6)}%`,
                 backgroundColor: bandColor(r.value),
               }}
-              title={`${r.label} — ${r.value}% (${r.count})`}
+              title={`${r.label} — ${r.value.toFixed(1)}% (${r.count})`}
             />
           </div>
           <bdi className="w-12 shrink-0 text-xs tabular-nums text-slate-600 text-end">
@@ -99,11 +102,44 @@ export function InSpecChart({ rows }: { rows: InSpecRow[]; height?: number }) {
       <div className="flex items-center gap-3 pt-1">
         <div className="w-48 shrink-0" />
         <div className="flex-1 flex justify-between text-[10px] text-slate-400 tabular-nums">
-          {[0, 25, 50, 75, 100].map((n) => <bdi key={n}>{n}%</bdi>)}
+          {ticks.map((n) => <bdi key={n}>{n}%</bdi>)}
         </div>
         <div className="w-12 shrink-0" />
       </div>
     </div>
+  );
+}
+
+/** In-spec percentage per parameter — green ≥95 / amber 85–95 / red <85. */
+export function InSpecChart({ rows }: { rows: InSpecRow[]; height?: number }) {
+  const { t } = useLang();
+  return (
+    <MetricBarChart
+      rows={rows}
+      scaleMax={100}
+      bandColor={(v) => (v >= 95 ? CHART.pass : v >= 85 ? CHART.warning : CHART.fail)}
+      emptyMessage={t("Not enough readings yet.", "لا توجد قراءات كافية بعد.")}
+    />
+  );
+}
+
+/**
+ * Coefficient of variation per parameter — green <5 / amber 5–10 / red >10,
+ * lower is more consistent (the inverse sense of `InSpecChart`). Unlike
+ * in-spec %, CV% has no fixed ceiling, so the scale grows with the data
+ * (never below 20, so the 10% redline stays comfortably inside the first
+ * half of the track even when every row is well-behaved).
+ */
+export function CvChart({ rows }: { rows: InSpecRow[]; height?: number }) {
+  const { t } = useLang();
+  const scaleMax = Math.max(20, ...rows.map((r) => r.value));
+  return (
+    <MetricBarChart
+      rows={rows}
+      scaleMax={scaleMax}
+      bandColor={(v) => (v < 5 ? CHART.pass : v <= 10 ? CHART.warning : CHART.fail)}
+      emptyMessage={t("Not enough readings yet.", "لا توجد قراءات كافية بعد.")}
+    />
   );
 }
 

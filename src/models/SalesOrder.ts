@@ -13,6 +13,11 @@ export interface ISalesOrderLine {
    *  the client — the same rule the lab applies to a scored result. */
   lineWeightKg: number;
   note?: string;
+  /** A sales concession known at order-creation time — NOT the packed-bags
+   *  fact, which belongs to the weighbridge at stage 8. Kept out of
+   *  `bagCount`/`lineWeightKg` so it never silently inflates the numbers the
+   *  variance/report/export math already depends on. */
+  bonusBags?: number;
 }
 
 /**
@@ -49,9 +54,18 @@ export interface ISalesOrderDoc extends Document {
   orderDate: Date;
   deliveryDate?: Date | null;
   notes: string;
+  /** Printed on the MS-SC/F7 form. Frozen at creation like `customer`/
+   *  `customerAr` — a later edit to the LabCustomer record must not rewrite an
+   *  already-approved paper trail. */
+  customerAddress: string;
+  salesRepName: string;
+  agentName: string;
+  paymentMethod: "cash" | "deferred" | "";
   lines: ISalesOrderLine[];
   totalBags: number;
   totalWeightKg: number;
+  totalBonusBags: number;
+  totalBonusWeightKg: number;
   status: string;
   currentStageIndex: number;
   currentStageEnteredAt: Date;
@@ -79,6 +93,13 @@ export interface ISalesOrderDoc extends Document {
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
+  /**
+   * Plain subdocuments, NOT chain stages — neither gates the order, so adding
+   * them here costs zero index/stage-table changes and leaves
+   * `currentStageIndex`'s meaning untouched. See SalesOrder annotations route.
+   */
+  collections: { note: string; byId: Types.ObjectId | null; byName: string; at: Date | null };
+  packing: { note: string; byId: Types.ObjectId | null; byName: string; at: Date | null };
 }
 
 const SalesOrderLineSchema = new Schema<ISalesOrderLine>(
@@ -90,6 +111,7 @@ const SalesOrderLineSchema = new Schema<ISalesOrderLine>(
     bagCount:     { type: Number, required: true, min: 1 },
     lineWeightKg: { type: Number, required: true },
     note:         { type: String, default: "" },
+    bonusBags:    { type: Number, default: 0 },
   },
   { _id: false }
 );
@@ -129,10 +151,16 @@ const SalesOrderSchema = new Schema<ISalesOrderDoc>(
     orderDate:    { type: Date, required: true },
     deliveryDate: { type: Date, default: null },
     notes:        { type: String, default: "" },
+    customerAddress: { type: String, default: "" },
+    salesRepName:    { type: String, default: "" },
+    agentName:       { type: String, default: "" },
+    paymentMethod:   { type: String, enum: ["cash", "deferred", ""], default: "" },
 
-    lines:         [SalesOrderLineSchema],
-    totalBags:     { type: Number, default: 0 },
-    totalWeightKg: { type: Number, default: 0 },
+    lines:              [SalesOrderLineSchema],
+    totalBags:          { type: Number, default: 0 },
+    totalWeightKg:      { type: Number, default: 0 },
+    totalBonusBags:     { type: Number, default: 0 },
+    totalBonusWeightKg: { type: Number, default: 0 },
 
     status: { type: String, enum: ["Pending", "Posted", "Rejected"], default: "Pending", index: true },
 
@@ -171,6 +199,19 @@ const SalesOrderSchema = new Schema<ISalesOrderDoc>(
     createdById:   { type: Schema.Types.ObjectId, ref: "User", required: true },
     createdByName: { type: String, default: "" },
     isActive:      { type: Boolean, default: true },
+
+    collections: {
+      note:   { type: String, default: "" },
+      byId:   { type: Schema.Types.ObjectId, ref: "User", default: null },
+      byName: { type: String, default: "" },
+      at:     { type: Date, default: null },
+    },
+    packing: {
+      note:   { type: String, default: "" },
+      byId:   { type: Schema.Types.ObjectId, ref: "User", default: null },
+      byName: { type: String, default: "" },
+      at:     { type: Date, default: null },
+    },
   },
   { timestamps: true }
 );

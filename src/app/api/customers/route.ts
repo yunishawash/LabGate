@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongoose";
 import { requireRole, requireSession } from "@/lib/requireSession";
 import {
-  badRequest, conflict, containsRegex, readJson, str,
+  badRequest, badStrictStr, conflict, containsRegex, readJson, str, strictStr,
   normalizeName, isDuplicateKeyError, paging,
 } from "@/lib/apiHelpers";
 import LabCustomer from "@/models/LabCustomer";
@@ -104,6 +104,11 @@ export async function POST(req: NextRequest) {
   const name = str(body.name, 200);
   if (!name) return badRequest("A customer name is required");
 
+  const addressCheck = strictStr(body.address, 500, "Address");
+  if (!addressCheck.ok) return badStrictStr(addressCheck);
+  const notesCheck = strictStr(body.notes, 4000, "Notes");
+  if (!notesCheck.ok) return badStrictStr(notesCheck);
+
   const nameKey = normalizeName(name);
 
   // Friendly check first, so the user gets the existing name back...
@@ -118,8 +123,8 @@ export async function POST(req: NextRequest) {
       code: str(body.code, 40),
       phone: str(body.phone, 40),
       contactName: str(body.contactName, 120),
-      address: str(body.address, 400),
-      notes: str(body.notes, 1000),
+      address: addressCheck.value,
+      notes: notesCheck.value,
       isActive: true,
     });
     return NextResponse.json(created, { status: 201 });

@@ -46,6 +46,10 @@ export interface OrderPermissions {
   canEnterLab: boolean;
   canWeigh: boolean;
   canEdit: boolean;
+  /** Collections/packing notes are role-gated, not stage-gated — neither box
+   *  is a chain slot, so this does not come from `granted`. */
+  canWriteCollections: boolean;
+  canWritePacking: boolean;
   actableStageKeys: string[];
   /** Set when the actor is standing in for someone — the UI must say so before
    *  they sign, and the stored signature records it. */
@@ -106,6 +110,8 @@ export async function orderPermissions(
     canEnterLab: granted.some((g) => g.stage.kind === "data_entry"),
     canWeigh: granted.some((g) => g.stage.kind === "weigh"),
     canEdit: canEdit(order, actor),
+    canWriteCollections: ["accountant", "finance_manager", "admin"].includes(actor.role),
+    canWritePacking: ["weighbridge", "admin"].includes(actor.role),
     actableStageKeys: granted.map((g) => g.stage.key),
     actingAs: standIn
       ? {

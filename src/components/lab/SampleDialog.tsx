@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
-import { Paperclip, X } from "lucide-react";
+import { Paperclip, X, AlertTriangle } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -11,13 +11,14 @@ import { Combobox } from "@/components/ui/combobox";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { QcStatusBadge } from "@/components/ui/qc-status-badge";
+import { DecisionBadge } from "@/components/ui/decision-badge";
 import { useLang } from "@/components/layout/AppShell";
 import { evaluate, deviationFromTarget, rollUpStatus } from "@/lib/labQc";
 import { toDateInputValue } from "@/lib/utils";
 import {
-  LAB_SHIFT_LABELS, LAB_DECISION_LABELS,
+  LAB_SHIFT_LABELS,
   type ILabProduct, type ILabCustomer, type ILabProductSpec,
-  type ILabSample, type LabStatus,
+  type ILabSample, type ILabAttachment, type LabStatus,
 } from "@/types";
 
 const SELECT_CLASS =
@@ -70,20 +71,28 @@ export function SampleDialog({
   const [batchId, setBatchId] = useState("");
   const [notes, setNotes] = useState("");
   const [values, setValues] = useState<Record<string, string>>({});
-  const [decision, setDecision] = useState("pending");
-  const [decisionNote, setDecisionNote] = useState("");
 
   const [specs, setSpecs] = useState<ILabProductSpec[]>([]);
   const [specsLoading, setSpecsLoading] = useState(false);
+  const [existingAttachments, setExistingAttachments] = useState<ILabAttachment[]>([]);
+  /** Ids staged for removal on Save, NOT removed from disk yet — see
+   *  `pendingRemovals` below for why deleting immediately was wrong. */
+  const [pendingRemovals, setPendingRemovals] = useState<string[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  /** Set only when the sample saved but its report did not attach — the
+   *  sample must not be reported as failed, but the dialog must not close
+   *  either, or the file is gone with no way back to retry it. */
+  const [savedSample, setSavedSample] = useState<ILabSample | undefined>();
 
   // Reset whenever the dialog opens, so a previous entry never bleeds through.
   useEffect(() => {
     if (!open) return;
     setError("");
     setFiles([]);
+    setPendingRemovals([]);
+    setSavedSample(undefined);
     if (editing) {
       setProductId(editing.productId);
       setCustomerId(editing.customerId ?? "");
@@ -91,20 +100,35 @@ export function SampleDialog({
       setShift(editing.shift ?? "");
       setBatchId(editing.batchId ?? "");
       setNotes(editing.notes ?? "");
-      setDecision(editing.finalDecision ?? "pending");
-      setDecisionNote(editing.finalDecisionNote ?? "");
       setValues(
         Object.fromEntries(editing.results.map((r) => [r.parameterId, String(r.value)]))
       );
+      setExistingAttachments(editing.attachments ?? []);
     } else {
       setProductId(prefill?.productId ?? "");
       setCustomerId(prefill?.customerId ?? "");
       setSampleDate(toDateInputValue(new Date()));
       setShift(""); setBatchId(""); setNotes("");
-      setDecision("pending"); setDecisionNote("");
       setValues({});
+      setExistingAttachments([]);
     }
   }, [open, editing, prefill]);
+
+  /**
+   * Stage the removal — do NOT delete the file yet.
+   *
+   * This used to call DELETE immediately, so pressing Cancel right after
+   * removing a file by mistake did not bring it back: the disk write had
+   * already happened. Every other field in this dialog is discardable until
+   * Save; an attachment must behave the same way. The actual DELETE now runs
+   * from `handleSave`, alongside the other changes going out in one action.
+   */
+  const removeExistingAttachment = (attachmentId?: string) => {
+    if (!attachmentId) return;
+    if (!window.confirm(t("Remove this file?", "إزالة هذا الملف؟"))) return;
+    setExistingAttachments((prev) => prev.filter((a) => a._id !== attachmentId));
+    setPendingRemovals((prev) => [...prev, attachmentId]);
+  };
 
   // The spec sheet is per product — changing the product changes every limit.
   useEffect(() => {
@@ -141,6 +165,28 @@ export function SampleDialog({
   const overall = entered.length
     ? rollUpStatus(entered.map((p) => p.status as LabStatus))
     : null;
+  const counts = {
+    pass: entered.filter((p) => p.status === "pass").length,
+    warning: entered.filter((p) => p.status === "warning").length,
+    fail: entered.filter((p) => p.status === "fail").length,
+  };
+
+  /**
+   * The sign-off is a verdict ON THE RESULT, never a preference of whoever
+   * typed the readings — there is no dropdown here at all, by design (client
+   * decision): a sample that is in spec (or merely close to a limit) already
+   * complies, and one that is out of range already doesn't. Overriding that
+   * — accepting a borderline fail with justification, say — is not something
+   * this entry form does; it happens elsewhere, not by letting the person
+   * keying in numbers also pick their own verdict.
+   */
+  const effectiveDecision: "pending" | "accepted" | "rejected" =
+    overall === "fail" ? "rejected" : overall ? "accepted" : "pending";
+
+  // Shown persistently while the form is open, not just sprung as a confirm()
+  // at save time — a technician should see the "is this a typo?" flag as soon
+  // as they type it, not after they've already reached for Save.
+  const implausible = entered.filter((p) => isImplausible(p.value as number, p.spec));
 
   const handleSave = useCallback(async () => {
     if (!productId) { setError(t("Choose a product.", "اختر الصنف.")); return; }
@@ -151,9 +197,8 @@ export function SampleDialog({
 
     // Non-blocking: an out-of-spec reading is exactly what this system exists to
     // record. Only ask about values that look like a typing slip.
-    const suspicious = entered.filter((p) => isImplausible(p.value as number, p.spec));
-    if (suspicious.length) {
-      const list = suspicious.map((p) => `${p.spec.name} = ${p.value}`).join("\n");
+    if (implausible.length) {
+      const list = implausible.map((p) => `${p.spec.name} = ${p.value}`).join("\n");
       const ok = window.confirm(
         t(
           `These readings look far outside the usual range — a mistyped decimal?\n\n${list}\n\nSave them as entered?`,
@@ -166,45 +211,90 @@ export function SampleDialog({
     setSaving(true);
     setError("");
 
-    const payload = {
-      productId,
-      customerId: customerId || null,
-      sampleDate,
-      shift,
-      batchId,
-      notes,
-      results: entered.map((p) => ({ parameterId: p.spec.parameterId, value: p.value })),
-      ...(canSignOff ? { finalDecision: decision, finalDecisionNote: decisionNote } : {}),
-    };
-
     // Declared outside the try block so it still exists at the `onSaved` call
     // below — a caller chaining off the created sample's id (the order flow)
     // needs it, not just the fact that saving succeeded.
-    let saved: ILabSample | undefined;
+    let saved: ILabSample | undefined = savedSample;
 
     try {
-      const res = await fetch(
-        editing ? `/api/lab/samples/${editing._id}` : "/api/lab/samples",
-        {
-          method: editing ? "PUT" : "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+      // `savedSample` is set only when a PREVIOUS attempt already created (or
+      // updated) the sample and it was the attachment step that failed — see
+      // the catch-block below. Retrying must not re-submit the sample fields
+      // a second time; it only needs to finish the attachment work.
+      if (!saved) {
+        const payload = {
+          productId,
+          customerId: customerId || null,
+          sampleDate,
+          shift,
+          batchId,
+          notes,
+          results: entered.map((p) => ({ parameterId: p.spec.parameterId, value: p.value })),
+          ...(canSignOff ? { finalDecision: effectiveDecision } : {}),
+        };
+
+        const res = await fetch(
+          editing ? `/api/lab/samples/${editing._id}` : "/api/lab/samples",
+          {
+            method: editing ? "PUT" : "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          }
+        );
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          const d = data as { error?: string; errorAr?: string };
+          setError((lang === "ar" ? d.errorAr : undefined) || d.error || `Error ${res.status}`);
+          setSaving(false);
+          return;
         }
-      );
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError((data as { error?: string }).error || `Error ${res.status}`);
-        setSaving(false);
-        return;
+        saved = await res.json();
+        setSavedSample(saved);
+      }
+
+      // Commit any attachment removed earlier in this session. Best-effort,
+      // same as before — one file that failed to delete does not block the
+      // rest of the save, and cleared here so a retry (below) does not
+      // resend a removal that already succeeded.
+      if (pendingRemovals.length) {
+        await Promise.all(
+          pendingRemovals.map((attachmentId) =>
+            fetch(`/api/lab/samples/${saved!._id}/attachments/${attachmentId}`, { method: "DELETE" })
+          )
+        );
+        setPendingRemovals([]);
       }
 
       // Attachments are staged in the browser and uploaded only after the
-      // sample exists — they need its id for their folder.
-      saved = await res.json();
+      // sample exists — they need its id for their folder. UNLIKE the sample
+      // save above, this result IS checked: a rejected file (too large, wrong
+      // content, an unreachable server) used to vanish silently while the
+      // dialog reported success. The sample already exists and stays saved —
+      // only the attachment step is retried.
       if (files.length) {
         const form = new FormData();
         files.forEach((f) => form.append("files", f));
-        await fetch(`/api/lab/samples/${saved!._id}/attachments`, { method: "POST", body: form });
+        const res = await fetch(`/api/lab/samples/${saved!._id}/attachments`, {
+          method: "POST",
+          body: form,
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          const d = data as { error?: string; errorAr?: string };
+          const reason = (lang === "ar" ? d.errorAr : undefined) || d.error || `Error ${res.status}`;
+          setError(
+            t(
+              `The sample was saved, but the report could not be attached: ${reason} Fix the file and try again.`,
+              `تم حفظ العيّنة، لكن تعذّر إرفاق التقرير: ${reason} صحّح الملف وحاول مرة أخرى.`
+            )
+          );
+          setSaving(false);
+          return;
+        }
+        // The files just uploaded successfully — clear them so a retry (if
+        // the user still presses Save for some other reason) cannot resend
+        // the same files a second time.
+        setFiles([]);
       }
     } catch {
       setError(t("Network error — please try again.", "خطأ في الشبكة — يُرجى المحاولة مرة أخرى."));
@@ -216,8 +306,8 @@ export function SampleDialog({
     onSaved(saved);
     onClose();
   }, [
-    productId, customerId, sampleDate, shift, batchId, notes, entered, files,
-    editing, decision, decisionNote, canSignOff, onSaved, onClose, t,
+    productId, customerId, sampleDate, shift, batchId, notes, entered, implausible, files,
+    pendingRemovals, savedSample, editing, effectiveDecision, canSignOff, onSaved, onClose, t, lang,
   ]);
 
   return (
@@ -300,7 +390,10 @@ export function SampleDialog({
               <Label>{t("Readings", "القراءات")}</Label>
               {overall && (
                 <span className="flex items-center gap-2 text-xs text-slate-500">
-                  {t("Live verdict", "الحكم اللحظي")}
+                  <span>
+                    {counts.pass} {t("ok", "مطابق")} · {counts.warning} {t("warning", "تحذير")} · {counts.fail} {t("out of range", "خارج النطاق")}
+                  </span>
+                  <span>{t("Live verdict", "الحكم اللحظي")}</span>
                   <QcStatusBadge status={overall} />
                 </span>
               )}
@@ -314,47 +407,71 @@ export function SampleDialog({
               <p className="text-sm text-slate-400 p-4 text-center">{t("Loading…", "جارٍ التحميل…")}</p>
             ) : (
               <div className="border border-slate-200 rounded-lg overflow-hidden divide-y divide-slate-100">
-                {preview.map(({ spec, value, status, deviation }) => (
-                  <div key={spec.parameterId} className="flex items-center gap-3 px-3 py-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm text-slate-800 truncate">
-                        {(lang === "ar" && spec.nameAr) || spec.name}
-                        {spec.unit && <span className="text-slate-400"> ({spec.unit})</span>}
-                      </div>
-                      <bdi className="text-xs text-slate-400 block">
-                        {spec.min != null && spec.max != null
-                          ? `${spec.min} – ${spec.max}`
-                          : spec.max != null ? `≤ ${spec.max}`
-                          : spec.min != null ? `≥ ${spec.min}`
-                          : t("no limit", "بدون حد")}
-                        {spec.target != null && ` · ${t("target", "الهدف")} ${spec.target}`}
-                      </bdi>
-                    </div>
-                    <Input
-                      type="number"
-                      step="any"
-                      inputMode="decimal"
-                      className="w-28 h-9 text-end tabular-nums"
-                      value={values[spec.parameterId] ?? ""}
-                      onChange={(e) =>
-                        setValues((v) => ({ ...v, [spec.parameterId]: e.target.value }))
+                {preview.map(({ spec, value, status, deviation }) => {
+                  const isImplausibleValue = value !== null && isImplausible(value, spec);
+                  return (
+                    <div
+                      key={spec.parameterId}
+                      className={
+                        "flex items-center gap-3 px-3 py-2 " +
+                        (status === "fail" ? "bg-red-50/40" : status === "warning" ? "bg-amber-50/40" : "")
                       }
-                    />
-                    <div className="w-28 flex justify-end">
-                      {value !== null && status && (
-                        <span className="flex items-center gap-1.5">
-                          {deviation !== null && (
-                            <bdi className="text-xs text-slate-400 tabular-nums">
-                              {deviation > 0 ? "+" : ""}{(deviation * 100).toFixed(1)}%
-                            </bdi>
-                          )}
-                          <QcStatusBadge status={status} size="xs" />
-                        </span>
-                      )}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm text-slate-800 truncate">
+                          {(lang === "ar" && spec.nameAr) || spec.name}
+                          {spec.unit && <span className="text-slate-400"> ({spec.unit})</span>}
+                        </div>
+                        <bdi className="text-xs text-slate-400 block">
+                          {spec.min != null && spec.max != null
+                            ? `${spec.min} – ${spec.max}`
+                            : spec.max != null ? `≤ ${spec.max}`
+                            : spec.min != null ? `≥ ${spec.min}`
+                            : t("no limit", "بدون حد")}
+                          {spec.target != null && ` · ${t("target", "الهدف")} ${spec.target}`}
+                        </bdi>
+                      </div>
+                      <Input
+                        type="number"
+                        step="any"
+                        inputMode="decimal"
+                        className={
+                          "w-28 h-9 text-end tabular-nums " +
+                          (status === "fail" ? "border-red-400 focus-visible:ring-red-400"
+                            : status === "warning" ? "border-amber-400 focus-visible:ring-amber-400"
+                            : status === "pass" ? "border-green-400 focus-visible:ring-green-400" : "")
+                        }
+                        value={values[spec.parameterId] ?? ""}
+                        onChange={(e) =>
+                          setValues((v) => ({ ...v, [spec.parameterId]: e.target.value }))
+                        }
+                      />
+                      <div className="w-28 flex justify-end">
+                        {value !== null && status && (
+                          <span className="flex items-center gap-1.5">
+                            {deviation !== null && (
+                              <bdi className="text-xs text-slate-400 tabular-nums">
+                                {deviation > 0 ? "+" : ""}{(deviation * 100).toFixed(1)}%
+                              </bdi>
+                            )}
+                            <QcStatusBadge status={status} size="xs" />
+                            {isImplausibleValue && <AlertTriangle size={13} className="text-amber-500" />}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
+            )}
+            {implausible.length > 0 && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mt-2 flex items-start gap-1.5">
+                <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                {t(
+                  `${implausible.length} value(s) are far outside the normal range — double-check for a typo.`,
+                  `${implausible.length} قيمة بعيدة جدًا عن النطاق الطبيعي — تأكد من عدم وجود خطأ إدخال.`
+                )}
+              </p>
             )}
           </div>
 
@@ -371,15 +488,47 @@ export function SampleDialog({
             <input
               type="file"
               multiple
-              onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+              // Matches the server allowlist (attachments/route.ts): images,
+              // PDF, spreadsheets, text. Narrowing the picker doesn't replace
+              // the server-side content check (accept= is easily bypassed),
+              // it just stops most wrong-file mistakes before they happen.
+              accept="application/pdf,image/*,.csv,.txt,.xlsx,.xls"
+              onChange={(e) => {
+                // Accumulate rather than replace — picking files twice (once
+                // now, once more after noticing you forgot one) shouldn't
+                // silently drop the first batch. Reset the input's own value
+                // so choosing the exact same file again still fires onChange.
+                setFiles((prev) => [...prev, ...Array.from(e.target.files ?? [])]);
+                e.target.value = "";
+              }}
               className="block w-full text-sm text-slate-500 file:me-3 file:py-1.5 file:px-3 file:rounded-lg file:border file:border-slate-200 file:text-sm file:bg-white hover:file:bg-slate-50 file:cursor-pointer"
             />
-            {files.length > 0 && (
-              <ul className="text-xs text-slate-500 space-y-0.5 pt-1">
-                {files.map((f) => (
-                  <li key={f.name} className="flex items-center gap-1.5">
-                    <Paperclip size={11} />
-                    <span className="truncate">{f.name}</span>
+            {(existingAttachments.length > 0 || files.length > 0) && (
+              <ul className="text-xs space-y-1 pt-1">
+                {existingAttachments.map((a) => (
+                  <li key={a._id} className="flex items-center justify-between gap-2 bg-slate-50 rounded px-2 py-1.5">
+                    <a href={a.url} target="_blank" rel="noopener noreferrer"
+                      className="text-sky-600 hover:underline truncate flex items-center gap-1.5 min-w-0">
+                      <Paperclip size={11} className="shrink-0" />
+                      <span className="truncate">{a.fileName}</span>
+                    </a>
+                    <button type="button" onClick={() => removeExistingAttachment(a._id)}
+                      className="text-red-500 hover:underline cursor-pointer shrink-0">
+                      {t("Remove", "إزالة")}
+                    </button>
+                  </li>
+                ))}
+                {files.map((f, i) => (
+                  <li key={`${f.name}-${i}`} className="flex items-center justify-between gap-2 bg-sky-50 rounded px-2 py-1.5">
+                    <span className="text-slate-600 truncate flex items-center gap-1.5 min-w-0">
+                      <Paperclip size={11} className="shrink-0" />
+                      <span className="truncate">{f.name}</span>
+                      <span className="text-slate-400 shrink-0">({t("not uploaded yet", "لم يُرفع بعد")})</span>
+                    </span>
+                    <button type="button" onClick={() => setFiles((p) => p.filter((_, idx) => idx !== i))}
+                      className="text-red-500 hover:underline cursor-pointer shrink-0">
+                      {t("Remove", "إزالة")}
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -387,23 +536,20 @@ export function SampleDialog({
           </div>
 
           {canSignOff && (
-            <div className="border-t border-slate-100 pt-4 grid sm:grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>{t("Sign-off", "الاعتماد")}</Label>
-                {/* Signs off on the SAMPLE. Stage 7 of an order's chain is a
-                    different decision on a different object — never coupled. */}
-                <Combobox
-                  triggerClassName={SELECT_CLASS}
-                  value={decision}
-                  onChange={setDecision}
-                  options={(["pending", "accepted", "rejected"] as const).map((d) => ({
-                    value: d, label: LAB_DECISION_LABELS[d][lang],
-                  }))}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>{t("Sign-off note", "ملاحظة الاعتماد")}</Label>
-                <Input value={decisionNote} onChange={(e) => setDecisionNote(e.target.value)} />
+            <div className="border-t border-slate-100 pt-4 space-y-1.5">
+              <Label>{t("Sign-off", "الاعتماد")}</Label>
+              {/* Signs off on the SAMPLE. Stage 7 of an order's chain is a
+                  different decision on a different object — never coupled.
+                  Never an editable control, in ANY case — the client's own
+                  decision: whoever is entering readings does not also pick
+                  their own verdict. It is read entirely off the computed
+                  result (`effectiveDecision`, derived above), the same way
+                  for a pass, a warning or a fail.
+                  No separate note field here — the sample's own "Notes"
+                  above already covers it, and a second note tied to the
+                  sign-off was one place to write the same thing twice. */}
+              <div className="h-10 w-full max-w-xs rounded-lg border border-slate-200 bg-slate-50 px-3 flex items-center gap-2">
+                <DecisionBadge decision={effectiveDecision} />
               </div>
             </div>
           )}

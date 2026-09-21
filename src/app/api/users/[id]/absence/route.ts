@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongoose";
 import { requireSession, isUserAbsent } from "@/lib/requireSession";
-import { badRequest, notFound, oid, readJson, str } from "@/lib/apiHelpers";
+import { badRequest, badStrictStr, notFound, oid, readJson, str, strictStr } from "@/lib/apiHelpers";
 import { writeAudit } from "@/lib/audit";
 import { stageByKey, SALES_STAGES } from "@/lib/salesWorkflow";
 import User from "@/models/User";
@@ -58,11 +58,14 @@ export async function PUT(
     return badRequest("The return date must be after the start date");
   }
 
+  const noteCheck = strictStr(body.absenceNote, 500, "Note");
+  if (!noteCheck.ok) return badStrictStr(noteCheck);
+
   const wasAbsent = isUserAbsent(target);
 
   await User.updateOne(
     { _id: id },
-    { $set: { isAbsent, absentFrom, absentTo, absenceNote: str(body.absenceNote, 300) } }
+    { $set: { isAbsent, absentFrom, absentTo, absenceNote: noteCheck.value } }
   );
 
   const nowAbsent = isUserAbsent({ isAbsent, absentFrom, absentTo });
@@ -78,7 +81,7 @@ export async function PUT(
       newValue: nowAbsent ? "away" : "present",
       performedBy: userDoc._id,
       performedByName: userDoc.name,
-      notes: str(body.absenceNote, 300),
+      notes: noteCheck.value,
     });
   }
 

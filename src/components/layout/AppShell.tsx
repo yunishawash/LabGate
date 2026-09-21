@@ -1,10 +1,11 @@
 "use client";
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useState } from "react";
 import type { Session } from "next-auth";
 import { AuthProvider } from "./AuthProvider";
 import { Sidebar } from "./Sidebar";
 import { Header } from "./Header";
 import { useUnreadCount } from "@/lib/useUnreadCount";
+import { type Lang, langCookieString } from "@/lib/lang";
 
 /**
  * Bilingual context. No i18n library — call sites carry both literals inline:
@@ -12,7 +13,7 @@ import { useUnreadCount } from "@/lib/useUnreadCount";
  * This is the CMMS's convention and it is deliberate: there are no keys and no
  * catalogues to drift out of sync with the screens.
  */
-export type Lang = "en" | "ar";
+export type { Lang };
 
 interface LangCtx {
   lang: Lang;
@@ -37,34 +38,37 @@ export function useChartDirection() {
   return isRtl;
 }
 
-const LANG_KEY = "labgate-lang"; // NOT "cmms-lang" — same origin, different app
-
 export function AppShell({
   children,
   initialSession,
+  initialLang,
 }: {
   children: React.ReactNode;
   initialSession: Session | null;
+  /** Read server-side from the cookie (src/lib/lang.ts) by the dashboard
+   *  layout, so first paint is already correct — no client-side discovery,
+   *  no flash of the wrong language or direction. AppShell mounts only for
+   *  signed-in routes; the login page reads the same cookie directly and
+   *  renders its own strings without this context (src/app/login/page.tsx). */
+  initialLang: Lang;
 }) {
-  const [lang, setLang] = useState<Lang>("en");
-  // Only opens a stream once there is somebody to open it for — the login
-  // page renders this shell too, and an unauthenticated EventSource would
-  // reconnect against a 401 forever.
+  const [lang, setLang] = useState<Lang>(initialLang);
+  // Only opens a stream once there is somebody to open it for — an
+  // unauthenticated EventSource would reconnect against a 401 forever.
   const { unread: unreadCount } = useUnreadCount(!!initialSession?.user);
 
-  useEffect(() => {
-    const stored = localStorage.getItem(LANG_KEY) as Lang | null;
-    if (stored === "ar" || stored === "en") setLang(stored);
-  }, []);
-
-  useEffect(() => {
-    document.documentElement.setAttribute("lang", lang);
-    document.documentElement.setAttribute("dir", lang === "ar" ? "rtl" : "ltr");
-    localStorage.setItem(LANG_KEY, lang);
-  }, [lang]);
-
   const t = (en: string, ar: string) => (lang === "ar" ? ar : en);
-  const toggleLang = () => setLang((l) => (l === "en" ? "ar" : "en"));
+
+  const toggleLang = () => {
+    const next: Lang = lang === "en" ? "ar" : "en";
+    setLang(next);
+    // The DOM attributes are set immediately (no reload needed to see the
+    // toggle take effect); the cookie is what makes the NEXT navigation and
+    // the NEXT cold load start in this language server-side.
+    document.documentElement.setAttribute("lang", next);
+    document.documentElement.setAttribute("dir", next === "ar" ? "rtl" : "ltr");
+    document.cookie = langCookieString(next);
+  };
 
   return (
     <AuthProvider session={initialSession}>

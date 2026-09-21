@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { TrendingUp, AlertTriangle, FlaskConical, Activity } from "lucide-react";
 import { StatCard } from "@/components/ui/stat-card";
 import { useLang } from "@/components/layout/AppShell";
-import { InSpecChart, StatusSplitBar, type InSpecRow } from "@/components/ui/lab-charts";
+import { InSpecChart, CvChart, StatusSplitBar, type InSpecRow } from "@/components/ui/lab-charts";
 import { QC_RATING_LABELS, type ILabStatRow, type QcRating } from "@/types";
 
 /**
@@ -72,14 +72,18 @@ export function KpiPanel({ filters }: { filters: LabKpiFilters }) {
   useEffect(() => { load(); }, [load]);
 
   // One bar per parameter, worst first — the eye should land on the problem.
-  const chartRows: InSpecRow[] = [...rows]
+  // Both charts share the row shape; only the metric and the "worst" sort
+  // direction differ (lower in-spec% is bad, higher CV% is bad).
+  const rowLabel = (r: ILabStatRow) => `${r.parameterName}${!product || product === "all" ? ` · ${r.product}` : ""}`;
+
+  const inSpecRows: InSpecRow[] = [...rows]
     .sort((a, b) => a.inSpecPct - b.inSpecPct)
-    .slice(0, 12)
-    .map((r) => ({
-      label: `${r.parameterName}${!product || product === "all" ? ` · ${r.product}` : ""}`,
-      value: Math.round(r.inSpecPct * 10) / 10,
-      count: r.count,
-    }));
+    .map((r) => ({ label: rowLabel(r), value: Math.round(r.inSpecPct * 10) / 10, count: r.count }));
+
+  const cvRows: InSpecRow[] = rows
+    .filter((r) => r.cvPct != null)
+    .sort((a, b) => (b.cvPct as number) - (a.cvPct as number))
+    .map((r) => ({ label: rowLabel(r), value: Math.round((r.cvPct as number) * 10) / 10, count: r.count }));
 
   return (
     <div className="space-y-4">
@@ -120,18 +124,33 @@ export function KpiPanel({ filters }: { filters: LabKpiFilters }) {
         </div>
       )}
 
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
-        <h3 className="text-sm font-medium text-slate-800">
-          {t("In-spec rate by parameter", "نسبة المطابقة لكل بارامتر")}
-        </h3>
-        <p className="text-xs text-slate-400 mt-0.5 mb-3">
-          {t("Worst first. Warnings count as in spec.", "الأسوأ أولاً. التحذيرات محسوبة ضمن المطابق.")}
-        </p>
-        {loading ? (
-          <div className="h-40 grid place-items-center text-sm text-slate-400">{t("Loading…", "جارٍ التحميل…")}</div>
-        ) : (
-          <InSpecChart rows={chartRows} />
-        )}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+          <h3 className="text-sm font-medium text-slate-800">
+            {t("Consistency — % In-Spec", "الثبات — نسبة المطابقة")}
+          </h3>
+          <p className="text-xs text-slate-400 mt-0.5 mb-3">
+            {t("Green ≥95% · amber 85–95% · red <85%. Worst first.", "أخضر ≥٩٥٪ · كهرماني ٨٥–٩٥٪ · أحمر <٨٥٪. الأسوأ أولاً.")}
+          </p>
+          {loading ? (
+            <div className="h-40 grid place-items-center text-sm text-slate-400">{t("Loading…", "جارٍ التحميل…")}</div>
+          ) : (
+            <InSpecChart rows={inSpecRows} />
+          )}
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+          <h3 className="text-sm font-medium text-slate-800">
+            {t("Variability — CV%", "التشتت — معامل الاختلاف")}
+          </h3>
+          <p className="text-xs text-slate-400 mt-0.5 mb-3">
+            {t("Green <5% · amber 5–10% · red >10%. Worst first.", "أخضر <٥٪ · كهرماني ٥–١٠٪ · أحمر >١٠٪. الأسوأ أولاً.")}
+          </p>
+          {loading ? (
+            <div className="h-40 grid place-items-center text-sm text-slate-400">{t("Loading…", "جارٍ التحميل…")}</div>
+          ) : (
+            <CvChart rows={cvRows} />
+          )}
+        </div>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">

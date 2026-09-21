@@ -74,13 +74,24 @@ export function CurrentStageCell({ order }: { order: OrderRow }) {
   if (order.status === "Rejected") {
     const stage = SALES_STAGES.find((s) => s.index === (order.rejection?.stageIndex ?? 0));
     return (
-      <div className="rounded-lg border border-red-200 bg-red-50/70 px-2.5 py-1.5 min-w-56">
+      <div className="rounded-lg border border-red-200 bg-red-50/70 px-2.5 py-1.5 min-w-56 max-w-56">
         <div className="flex items-center gap-1.5 text-sm font-medium text-red-800">
           <X size={13} className="flex-shrink-0" />
           {t("Rejected", "مرفوضة")}
           {stage && <span className="font-normal text-red-600">· {lang === "ar" ? stage.ar : stage.en}</span>}
         </div>
-        <p className="text-xs text-red-700/80 mt-0.5 line-clamp-2">{order.rejection?.reason}</p>
+        {/* `min-w-56` alone does not stop this box from growing — a reason with
+         *  no early line break (a long word, or just a long run of Arabic
+         *  text) forces the box, and with it the whole table, wider with no
+         *  limit. `max-w-56` caps it; `break-words` makes `line-clamp-2` wrap
+         *  within that cap instead of overflowing past it. `title` recovers
+         *  the full text the clamp hides — reasons can run to 2000 characters. */}
+        <p
+          className="text-xs text-red-700/80 mt-0.5 line-clamp-2 break-words"
+          title={order.rejection?.reason}
+        >
+          {order.rejection?.reason}
+        </p>
       </div>
     );
   }
@@ -88,7 +99,7 @@ export function CurrentStageCell({ order }: { order: OrderRow }) {
   if (order.status === "Posted") {
     const t8 = order.steps.find((s) => s.stageIndex === 8);
     return (
-      <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-2.5 py-1.5 min-w-56">
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-2.5 py-1.5 min-w-56 max-w-56">
         <div className="flex items-center gap-1.5 text-sm font-medium text-emerald-800">
           <Check size={13} className="flex-shrink-0" />
           {t("Posted", "مرحّلة")}
@@ -119,7 +130,7 @@ export function CurrentStageCell({ order }: { order: OrderRow }) {
   const waited = now === null ? "" : formatDuration(now - new Date(order.currentStageEnteredAt).getTime(), lang);
 
   return (
-    <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-2.5 py-1.5 min-w-56">
+    <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-2.5 py-1.5 min-w-56 max-w-56">
       <div className="flex items-center gap-1.5 text-sm font-medium text-slate-800">
         <span className="font-mono text-xs text-slate-400">{order.currentStageIndex}.</span>
         {stage ? (lang === "ar" ? stage.ar : stage.en) : "—"}

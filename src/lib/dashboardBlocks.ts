@@ -12,7 +12,6 @@ export type BlockKey =
   | "pipeline"        // C
   | "stuck"           // D
   | "thisMonth"       // E
-  | "rejections"      // F
   | "labQueue"        // G
   | "quality"         // H
   | "readyToWeigh"    // I
@@ -26,10 +25,11 @@ export const ROLE_BLOCKS: Record<string, BlockKey[]> = {
   sales_manager:     ["waitingOnMe", "thisMonth", "myOrders", "coverage"],
   finance_manager:   ["waitingOnMe", "thisMonth", "coverage"],
   accountant:        ["waitingOnMe", "coverage"],
-  // "rejections" ("Where orders die") dropped from the dashboard on the
-  // client's request — the daily screen isn't the place for it. The full
-  // breakdown, with the rejection rate per stage, still lives on the
-  // Rejections report (Reports → Rejections), where it's read weekly.
+  // "rejections" ("Where orders die") was dropped from the dashboard on the
+  // client's request, then removed outright along with the standalone
+  // Rejections page it linked to. The full breakdown, with the rejection
+  // rate per stage, still lives on the Rejections report (Reports →
+  // Rejections), where it's read weekly.
   //
   // K/L/M are the year-long trend charts — the daily "what's waiting"
   // blocks above them answer today's question, these answer "is the plant

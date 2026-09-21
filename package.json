@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",
-    "postbuild": "rm -rf .next/standalone/public .next/standalone/.next/static && cp -r public .next/standalone/public && cp -r .next/static .next/standalone/.next/static && ([ -f .env.local ] && cp .env.local .next/standalone/.env.local || true)",
-    "start": "next start -p 3001",
+    "postbuild": "rm -rf .next/standalone/public .next/standalone/.next/static && cp -r public .next/standalone/public && cp -r .next/static .next/standalone/.next/static && ([ -f .env.local ] && cp .env.local .next/standalone/.env.local || true) && rm -rf .next/standalone/node_modules/playwright-core && cp -r node_modules/playwright-core .next/standalone/node_modules/playwright-core",
+    "start": "PORT=3001 node .next/standalone/server.js",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

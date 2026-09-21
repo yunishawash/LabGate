@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongoose";
 import { requireModule, requireRole } from "@/lib/requireSession";
-import { badRequest, notFound, oid, readJson, str } from "@/lib/apiHelpers";
+import { badRequest, badStrictStr, notFound, oid, readJson, str, strictStr } from "@/lib/apiHelpers";
 import { visibilityFilter, andFilters, canEdit, type Actor, type OrderLike } from "@/lib/salesWorkflow";
 import { liveDelegationRoles, orderPermissions } from "@/lib/salesAuth";
 import SalesOrder from "@/models/SalesOrder";
@@ -132,7 +132,30 @@ export async function PUT(req: NextRequest, { params }: Params) {
     }
   }
   if ("referenceNo" in body) update.referenceNo = str(body.referenceNo, 60);
-  if ("notes" in body) update.notes = str(body.notes, 2000);
+  if ("notes" in body) {
+    const notesCheck = strictStr(body.notes, 5000, "Notes");
+    if (!notesCheck.ok) return badStrictStr(notesCheck);
+    update.notes = notesCheck.value;
+  }
+  if ("customerAddress" in body) {
+    const addressCheck = strictStr(body.customerAddress, 500, "Customer address");
+    if (!addressCheck.ok) return badStrictStr(addressCheck);
+    update.customerAddress = addressCheck.value;
+  }
+  if ("salesRepName" in body) {
+    const repCheck = strictStr(body.salesRepName, 120, "Sales rep name");
+    if (!repCheck.ok) return badStrictStr(repCheck);
+    update.salesRepName = repCheck.value;
+  }
+  if ("agentName" in body) {
+    const agentCheck = strictStr(body.agentName, 120, "Agent name");
+    if (!agentCheck.ok) return badStrictStr(agentCheck);
+    update.agentName = agentCheck.value;
+  }
+  if ("paymentMethod" in body) {
+    update.paymentMethod =
+      body.paymentMethod === "cash" || body.paymentMethod === "deferred" ? body.paymentMethod : "";
+  }
 
   if (Array.isArray(body.lines)) {
     if (!body.lines.length) return badRequest("An order needs at least one line");
@@ -141,9 +164,11 @@ export async function PUT(req: NextRequest, { params }: Params) {
     const lines: Record<string, unknown>[] = [];
     let totalBags = 0;
     let totalWeightKg = 0;
+    let totalBonusBags = 0;
+    let totalBonusWeightKg = 0;
 
     for (const raw of body.lines) {
-      const row = raw as { productId?: unknown; bagWeightKg?: unknown; bagCount?: unknown; note?: unknown };
+      const row = raw as { productId?: unknown; bagWeightKg?: unknown; bagCount?: unknown; note?: unknown; bonusBags?: unknown };
       const productId = oid(row.productId);
       if (!productId) return badRequest("Every line needs a valid productId");
 
@@ -155,6 +180,14 @@ export async function PUT(req: NextRequest, { params }: Params) {
       if (!Number.isInteger(bagCount) || bagCount < 1) {
         return badRequest("Every line needs a whole bag count of at least 1");
       }
+      const noteCheck = strictStr(row.note, 500, "Line note");
+      if (!noteCheck.ok) return badStrictStr(noteCheck);
+
+      const bonusBags = Number(row.bonusBags) || 0;
+      if (!Number.isInteger(bonusBags) || bonusBags < 0) {
+        return badRequest("Bonus bags must be a whole number of 0 or more");
+      }
+
       const product = (await LabProduct.findOne({ _id: productId, isActive: true })
         .select("name nameAr").lean()) as { name?: string; nameAr?: string } | null;
       if (!product) return badRequest("Unknown product on one of the lines");
@@ -162,15 +195,19 @@ export async function PUT(req: NextRequest, { params }: Params) {
       const lineWeightKg = bagWeightKg * bagCount;
       totalBags += bagCount;
       totalWeightKg += lineWeightKg;
+      totalBonusBags += bonusBags;
+      totalBonusWeightKg += bonusBags * bagWeightKg;
       lines.push({
         productId, product: product.name || "", productAr: product.nameAr || "",
-        bagWeightKg, bagCount, lineWeightKg, note: str(row.note, 200),
+        bagWeightKg, bagCount, lineWeightKg, note: noteCheck.value, bonusBags,
       });
     }
 
     update.lines = lines;
     update.totalBags = totalBags;
     update.totalWeightKg = totalWeightKg;
+    update.totalBonusBags = totalBonusBags;
+    update.totalBonusWeightKg = totalBonusWeightKg;
   }
 
   // Re-assert the precondition in the write itself: between the read above and

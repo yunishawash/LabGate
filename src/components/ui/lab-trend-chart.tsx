@@ -15,6 +15,11 @@ export interface LabTrendPoint {
   value: number;
   status: LabStatus;
   batchId?: string;
+  /** Shown in the tooltip only when set — the Lab page's own Results-tab
+   *  chart spans every customer at once, so knowing which one each point
+   *  belongs to matters there; a customer's own quality profile is already
+   *  scoped to one customer, so it's omitted there. */
+  customer?: string;
 }
 
 const AXIS_TICK = { fontSize: 11, fill: "#64748b" };
@@ -92,7 +97,9 @@ export function LabTrendChart({
                   <div className="font-medium text-slate-900 mt-0.5">
                     {p.value}{unit ? ` ${unit}` : ""}
                   </div>
-                  <div className="text-slate-400 mt-0.5">{p.sampleNumber}</div>
+                  <div className="text-slate-400 mt-0.5">
+                    {p.sampleNumber}{p.customer ? ` · ${p.customer}` : ""}
+                  </div>
                 </div>
               );
             }}
