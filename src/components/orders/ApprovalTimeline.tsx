@@ -165,7 +165,7 @@ function TimelineNode({
           <p className="text-sm font-medium text-red-800">
             {t("Rejected by", "رفضها")} {order.rejection?.byName}
           </p>
-          <p className="text-sm text-red-700 mt-0.5">{order.rejection?.reason}</p>
+          <p className="text-sm text-red-700 mt-0.5 break-words whitespace-pre-wrap">{order.rejection?.reason}</p>
           <p className="text-xs text-red-600/80 mt-1.5">
             {t(
               "This order is closed. A new order must be raised.",

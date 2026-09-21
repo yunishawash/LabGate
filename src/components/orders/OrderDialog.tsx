@@ -17,9 +17,9 @@ const SELECT_CLASS =
   "h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 " +
   "outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100 cursor-pointer";
 
-interface Line { productId: string; bagWeightKg: number; bagCount: string; note: string }
+interface Line { productId: string; bagWeightKg: number; bagCount: string; note: string; bonusBags: string }
 
-const emptyLine = (): Line => ({ productId: "", bagWeightKg: 50, bagCount: "", note: "" });
+const emptyLine = (): Line => ({ productId: "", bagWeightKg: 50, bagCount: "", note: "", bonusBags: "" });
 
 interface Props {
   open: boolean;
@@ -30,7 +30,8 @@ interface Props {
   editing?: {
     _id: string; customerId: string; referenceNo?: string; orderDate: string;
     deliveryDate?: string | null; notes?: string;
-    lines: { productId: string; bagWeightKg: number; bagCount: number; note?: string }[];
+    salesRepName?: string; agentName?: string; paymentMethod?: "cash" | "deferred" | "";
+    lines: { productId: string; bagWeightKg: number; bagCount: number; note?: string; bonusBags?: number }[];
   } | null;
 }
 
@@ -43,6 +44,9 @@ export function OrderDialog({ open, onClose, onSaved, customers, editing = null 
   const [orderDate, setOrderDate] = useState(toDateInputValue(new Date()));
   const [deliveryDate, setDeliveryDate] = useState("");
   const [notes, setNotes] = useState("");
+  const [salesRepName, setSalesRepName] = useState("");
+  const [agentName, setAgentName] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "deferred" | "">("");
   const [lines, setLines] = useState<Line[]>([emptyLine()]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -57,14 +61,19 @@ export function OrderDialog({ open, onClose, onSaved, customers, editing = null 
       setOrderDate(toDateInputValue(new Date(editing.orderDate)));
       setDeliveryDate(editing.deliveryDate ? toDateInputValue(new Date(editing.deliveryDate)) : "");
       setNotes(editing.notes ?? "");
+      setSalesRepName(editing.salesRepName ?? "");
+      setAgentName(editing.agentName ?? "");
+      setPaymentMethod(editing.paymentMethod ?? "");
       setLines(editing.lines.map((l) => ({
         productId: l.productId, bagWeightKg: l.bagWeightKg,
         bagCount: String(l.bagCount), note: l.note ?? "",
+        bonusBags: l.bonusBags ? String(l.bonusBags) : "",
       })));
     } else {
       setCustomerId(""); setReferenceNo("");
       setOrderDate(toDateInputValue(new Date()));
       setDeliveryDate(""); setNotes("");
+      setSalesRepName(""); setAgentName(""); setPaymentMethod("");
       setLines([emptyLine()]);
     }
   }, [open, editing]);
@@ -95,11 +104,15 @@ export function OrderDialog({ open, onClose, onSaved, customers, editing = null 
       orderDate,
       deliveryDate: deliveryDate || null,
       notes,
+      salesRepName,
+      agentName,
+      paymentMethod,
       lines: lines.map((l) => ({
         productId: l.productId,
         bagWeightKg: l.bagWeightKg,
         bagCount: parseInt(l.bagCount, 10),
         note: l.note,
+        bonusBags: parseInt(l.bonusBags, 10) || 0,
       })),
     };
 
@@ -165,6 +178,26 @@ export function OrderDialog({ open, onClose, onSaved, customers, editing = null 
               <Input type="date" value={deliveryDate} min={orderDate}
                 onChange={(e) => setDeliveryDate(e.target.value)} />
             </div>
+            <div className="space-y-1.5">
+              <Label>{t("Sales rep", "اسم المندوب")}</Label>
+              <Input value={salesRepName} onChange={(e) => setSalesRepName(e.target.value)} maxLength={120} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t("Agent", "الوكيل")}</Label>
+              <Input value={agentName} onChange={(e) => setAgentName(e.target.value)} maxLength={120} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t("Payment method", "طريقة الدفع")}</Label>
+              <select
+                className={SELECT_CLASS}
+                value={paymentMethod}
+                onChange={(e) => setPaymentMethod(e.target.value as "cash" | "deferred" | "")}
+              >
+                <option value="">{t("— Not set —", "— غير محدد —")}</option>
+                <option value="cash">{t("Cash", "نقدي")}</option>
+                <option value="deferred">{t("Deferred", "مؤجل")}</option>
+              </select>
+            </div>
           </div>
 
           <div>
@@ -204,6 +237,15 @@ export function OrderDialog({ open, onClose, onSaved, customers, editing = null 
                       placeholder={t("bags", "أكياس")}
                       value={l.bagCount}
                       onChange={(e) => setLine(i, { bagCount: e.target.value })}
+                    />
+
+                    <Input
+                      type="number" min={0} step={1} inputMode="numeric"
+                      className="h-9 w-24 text-end tabular-nums"
+                      placeholder={t("bonus", "بونص")}
+                      title={t("Bonus bags", "أكياس البونص")}
+                      value={l.bonusBags}
+                      onChange={(e) => setLine(i, { bonusBags: e.target.value })}
                     />
 
                     <bdi className="w-24 text-end text-sm tabular-nums text-slate-500">

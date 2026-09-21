@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongoose";
 import { requireModule } from "@/lib/requireSession";
-import { badRequest, notFound, oid, readJson, str, conflict } from "@/lib/apiHelpers";
+import { badRequest, badStrictStr, notFound, oid, readJson, strictStr, conflict } from "@/lib/apiHelpers";
 import { notifyStageEntered, notifyPosted } from "@/lib/salesNotify";
 import { visibilityFilter, andFilters, type Actor, type OrderLike } from "@/lib/salesWorkflow";
 import { liveDelegationRoles } from "@/lib/salesAuth";
@@ -43,11 +43,14 @@ export async function POST(
   }
 
   const body = await readJson(req);
+  const noteCheck = strictStr(body?.note, 2000, "Note");
+  if (!noteCheck.ok) return badStrictStr(noteCheck);
+
   const result = await claimAndAdvance(
     id,
     slot.stage,
     { _id: userDoc._id, name: userDoc.name },
-    { actedAs: slot.actedAs, actedForRole: slot.actedForRole, note: str(body?.note, 1000) }
+    { actedAs: slot.actedAs, actedForRole: slot.actedForRole, note: noteCheck.value }
   );
 
   if ("code" in result) {

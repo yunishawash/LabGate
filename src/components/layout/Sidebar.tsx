@@ -1,17 +1,18 @@
 "use client";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { useSession } from "next-auth/react";
 import {
   LayoutDashboard, ClipboardList, CheckSquare, PenLine, FlaskConical,
-  Users2, BarChart3, XCircle, ScrollText, UserCog, Activity,
+  Users2, BarChart3, ScrollText, UserCog, Activity,
   Menu, X, Languages, LifeBuoy,
   Bell,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { canAccessModule } from "@/lib/modules";
-import type { Lang } from "./AppShell";
+import type { Lang } from "@/lib/lang";
 
 interface NavItem {
   href: string;
@@ -37,7 +38,6 @@ const NAV: NavItem[] = [
   { href: "/lab",         label: "Lab",             labelAr: "المختبر",       icon: <FlaskConical    size={18} />, module: "lab" },
   { href: "/customers",   label: "Customers",       labelAr: "الزبائن",       icon: <Users2          size={18} />, module: "customers" },
   { href: "/reports",     label: "Reports",         labelAr: "التقارير",      icon: <BarChart3       size={18} />, module: "reports" },
-  { href: "/rejections",  label: "Rejections",      labelAr: "المرفوضة",      icon: <XCircle         size={18} /> },
   // No `module`: everyone in the chain gets notified, so everyone needs the page.
   { href: "/notifications", label: "Notifications",  labelAr: "الإشعارات",     icon: <Bell            size={18} />, badge: "notifications" },
   { href: "/audit-log",   label: "Audit Trail",     labelAr: "سجل التدقيق",   icon: <ScrollText      size={18} />, module: "audit-log" },
@@ -70,11 +70,13 @@ export function Sidebar({ lang, onToggleLang, unreadCount = 0 }: SidebarProps) {
   const navContent = (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-3 px-5 py-4 border-b border-white/10">
-        <div className="w-10 h-10 flex-shrink-0 rounded-lg bg-white/10 grid place-items-center text-white font-semibold tracking-tight">
-          LG
+        <div className="w-10 h-10 flex-shrink-0 rounded-lg bg-white/10 grid place-items-center overflow-hidden">
+          <Image src="/logo.png" alt="Golden Wheat Mills" width={40} height={40} className="object-contain" />
         </div>
         <div className="min-w-0">
-          <p className="text-white font-semibold text-sm leading-tight truncate">LabGate</p>
+          <p className="text-white font-semibold text-sm leading-tight truncate">
+            {lang === "ar" ? "نظام المبيعات" : "Sales System"}
+          </p>
           <p className="text-slate-400 text-xs truncate">
             {lang === "ar" ? "مطاحن القمح الذهبية" : "Golden Wheat Mills"}
           </p>

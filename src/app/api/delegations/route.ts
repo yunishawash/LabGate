@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongoose";
 import { requireSession } from "@/lib/requireSession";
-import { badRequest, conflict, oid, readJson, str } from "@/lib/apiHelpers";
+import { badRequest, badStrictStr, conflict, oid, readJson, str, strictStr } from "@/lib/apiHelpers";
 import { writeAudit } from "@/lib/audit";
 import { SALES_STAGES } from "@/lib/salesWorkflow";
 import Delegation from "@/models/Delegation";
@@ -91,13 +91,16 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const reasonCheck = strictStr(body.reason, 1000, "Reason");
+  if (!reasonCheck.ok) return badStrictStr(reasonCheck);
+
   const created = await Delegation.create({
     role,
     fromUserId: isAdmin && userDoc.role !== role ? null : userDoc._id,
     toUserId,
     toUserName: recipient.name,
     from, to,
-    reason: str(body.reason, 500),
+    reason: reasonCheck.value,
     createdById: userDoc._id,
     createdByName: userDoc.name,
     isActive: true,
@@ -112,7 +115,7 @@ export async function POST(req: NextRequest) {
     newValue: `${recipient.name} until ${to.toISOString().slice(0, 10)}`,
     performedBy: userDoc._id,
     performedByName: userDoc.name,
-    notes: str(body.reason, 500),
+    notes: reasonCheck.value,
   });
 
   return NextResponse.json(created, { status: 201 });

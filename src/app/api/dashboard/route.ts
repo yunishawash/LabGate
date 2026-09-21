@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongoose";
 import { requireSession, notAbsentFilter } from "@/lib/requireSession";
+import { dateRange, oid } from "@/lib/apiHelpers";
 import { visibilityFilter, andFilters, SALES_STAGES, type Actor } from "@/lib/salesWorkflow";
 import { liveDelegationRoles, stagesOwnedBy } from "@/lib/salesAuth";
 import { blocksFor, STUCK_HOURS, type BlockKey } from "@/lib/dashboardBlocks";
@@ -21,7 +22,7 @@ import User from "@/models/User";
  *     role ladder in the client would be a second copy of `ROLE_BLOCKS`, free to
  *     drift from the one the API computes with.
  */
-export async function GET(_req: NextRequest) {
+export async function GET(req: NextRequest) {
   await connectDB();
   const check = await requireSession();
   if (check.error) return check.error;
@@ -35,6 +36,27 @@ export async function GET(_req: NextRequest) {
 
   const now = new Date();
   const stuckBefore = new Date(now.getTime() - STUCK_HOURS * 3600_000);
+
+  /**
+   * The dashboard's own top filter bar (date range / product / customer) —
+   * separate from `visible`, which is authorization and is never optional.
+   * Applied only to the reporting/analytics widgets below the "waiting on
+   * you" queues: those queues (waitingOnMe, myOrders, labQueue, readyToWeigh)
+   * answer "what needs me right now" and filtering them by a historical date
+   * range would contradict their purpose, so they deliberately ignore these
+   * params.
+   */
+  const { searchParams } = new URL(req.url);
+  const range = dateRange(searchParams.get("from"), searchParams.get("to"));
+  const customerId = oid(searchParams.get("customerId") || "");
+  const productId = oid(searchParams.get("productId") || "");
+  const dated = (field: string) => (range ? { [field]: range } : {});
+  const orderExtra: Record<string, unknown> = {};
+  if (customerId) orderExtra.customerId = customerId;
+  if (productId) orderExtra["lines.productId"] = productId;
+  const sampleExtra: Record<string, unknown> = {};
+  if (customerId) sampleExtra.customerId = customerId;
+  if (productId) sampleExtra.productId = productId;
 
   const data: Record<string, unknown> = {};
 
@@ -78,7 +100,7 @@ export async function GET(_req: NextRequest) {
   // ── C · Pipeline board ───────────────────────────────────────────────────
   if (want("pipeline")) {
     const rows = await SalesOrder.aggregate([
-      { $match: andFilters(visible, { status: "Pending" }) },
+      { $match: andFilters(visible, { status: "Pending" }, orderExtra, dated("orderDate")) },
       {
         $group: {
           _id: "$currentStageIndex",
@@ -97,13 +119,18 @@ export async function GET(_req: NextRequest) {
 
   // ── D · Stuck orders ─────────────────────────────────────────────────────
   if (want("stuck")) {
-    const filter = andFilters(visible, {
-      status: "Pending",
-      currentStageEnteredAt: { $lt: stuckBefore },
-    });
+    const filter = andFilters(
+      visible,
+      { status: "Pending", currentStageEnteredAt: { $lt: stuckBefore } },
+      orderExtra,
+      dated("orderDate")
+    );
     const [rows, total] = await Promise.all([
       SalesOrder.find(filter)
-        .sort({ currentStageEnteredAt: 1 }).limit(6)
+        // Fetched once, paginated client-side by the widget (see `Stuck` in
+        // blocks.tsx) — a dashboard card, not a full list page, so a
+        // generous cap beats adding a second paged endpoint for it.
+        .sort({ currentStageEnteredAt: 1 }).limit(30)
         .select("orderNumber customer customerAr currentStageIndex currentStageEnteredAt totalWeightKg")
         .lean(),
       SalesOrder.countDocuments(filter),
@@ -119,7 +146,7 @@ export async function GET(_req: NextRequest) {
     const period = async (from: Date, to: Date) => {
       const [posted, rejected] = await Promise.all([
         SalesOrder.aggregate([
-          { $match: andFilters(visible, { status: "Posted", postedAt: { $gte: from, $lt: to } }) },
+          { $match: andFilters(visible, { status: "Posted", postedAt: { $gte: from, $lt: to } }, orderExtra) },
           {
             $group: {
               _id: null,
@@ -132,7 +159,7 @@ export async function GET(_req: NextRequest) {
           },
         ]),
         SalesOrder.aggregate([
-          { $match: andFilters(visible, { status: "Rejected", updatedAt: { $gte: from, $lt: to } }) },
+          { $match: andFilters(visible, { status: "Rejected", updatedAt: { $gte: from, $lt: to } }, orderExtra) },
           { $group: { _id: null, count: { $sum: 1 }, kg: { $sum: "$totalWeightKg" } } },
         ]),
       ]);
@@ -149,23 +176,6 @@ export async function GET(_req: NextRequest) {
       current: await period(startThis, now),
       previous: await period(startLast, startThis),
     };
-  }
-
-  // ── F · Rejections ───────────────────────────────────────────────────────
-  if (want("rejections")) {
-    const rejected = andFilters(visible, { status: "Rejected" });
-    const [recent, byStage] = await Promise.all([
-      SalesOrder.find(rejected)
-        .sort({ updatedAt: -1 }).limit(5)
-        .select("orderNumber customer customerAr totalWeightKg rejection updatedAt")
-        .lean(),
-      SalesOrder.aggregate([
-        { $match: rejected },
-        { $group: { _id: "$rejection.stageIndex", count: { $sum: 1 }, kg: { $sum: "$totalWeightKg" } } },
-        { $sort: { count: -1 } },
-      ]),
-    ]);
-    data.rejections = { recent, byStage };
   }
 
   // ── G · Lab queue ────────────────────────────────────────────────────────
@@ -191,8 +201,12 @@ export async function GET(_req: NextRequest) {
   // ── H · Quality signal ───────────────────────────────────────────────────
   if (want("quality")) {
     const thirty = new Date(now.getTime() - 30 * 86400_000);
+    const sampleWindow = range ?? { $gte: thirty };
+    const days = range?.$gte
+      ? Math.max(1, Math.round(((range.$lte ?? now).getTime() - range.$gte.getTime()) / 86400_000))
+      : 30;
     const rows = await LabSample.aggregate([
-      { $match: { isActive: true, createdAt: { $gte: thirty } } },
+      { $match: { isActive: true, sampleDate: sampleWindow, ...sampleExtra } },
       { $group: { _id: "$overallStatus", count: { $sum: 1 } } },
     ]);
     const by = Object.fromEntries(rows.map((r) => [r._id, r.count])) as Record<string, number>;
@@ -203,31 +217,46 @@ export async function GET(_req: NextRequest) {
       // "In spec" counts warnings: a warning is inside the accepted range, just
       // near a limit. Excluding them would understate quality.
       inSpecPct: total ? Math.round(((pass + warning) / total) * 1000) / 10 : null,
-      days: 30,
+      days,
     };
   }
 
-  // ── the last-12-months window, shared by K/L/M ───────────────────────────
-  const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+  // ── the trend window, shared by K/L/M ─────────────────────────────────────
+  // Defaults to the last 12 months; the filter bar's date range overrides it
+  // when set, so a person filtering to a single quarter sees exactly that
+  // quarter's months, not 12 months with most of them filtered to zero.
+  const windowEnd = range?.$lte ?? now;
+  const windowStart = range?.$gte ?? new Date(windowEnd.getFullYear(), windowEnd.getMonth() - 11, 1);
 
   /**
-   * Fold `{year, month, …}` aggregation rows into a fixed 12-slot array in
+   * Fold `{year, month, …}` aggregation rows into a fixed per-month array in
    * calendar order, oldest first. A month with nothing in it is a REAL zero,
    * not a missing point — a chart that silently drops empty months hides
-   * exactly the slow month it should be showing.
+   * exactly the slow month it should be showing. Capped at 60 slots so an
+   * open-ended custom range can't blow up the response.
    */
-  function twelveMonthSlots(): { year: number; month: number }[] {
-    return Array.from({ length: 12 }, (_, i) => {
-      const d = new Date(now.getFullYear(), now.getMonth() - 11 + i, 1);
-      return { year: d.getFullYear(), month: d.getMonth() };
-    });
+  function monthSlots(): { year: number; month: number }[] {
+    const slots: { year: number; month: number }[] = [];
+    const cursor = new Date(windowStart.getFullYear(), windowStart.getMonth(), 1);
+    const last = new Date(windowEnd.getFullYear(), windowEnd.getMonth(), 1);
+    for (let i = 0; cursor <= last && i < 60; i++) {
+      slots.push({ year: cursor.getFullYear(), month: cursor.getMonth() });
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+    return slots;
   }
 
   // ── K · Volume trend — tonnage bars + rejection-rate line, by month ──────
   if (want("volumeTrend")) {
     const [tonnageRows, outcomeRows] = await Promise.all([
       SalesOrder.aggregate([
-        { $match: andFilters(visible, { status: "Posted", postedAt: { $gte: twelveMonthsAgo } }) },
+        {
+          $match: andFilters(
+            visible,
+            { status: "Posted", postedAt: { $gte: windowStart, $lte: windowEnd } },
+            orderExtra
+          ),
+        },
         {
           $group: {
             _id: { y: { $year: "$postedAt" }, m: { $month: "$postedAt" } },
@@ -242,10 +271,11 @@ export async function GET(_req: NextRequest) {
       // month that simply hasn't finished playing out.
       SalesOrder.aggregate([
         {
-          $match: andFilters(visible, {
-            status: { $in: ["Posted", "Rejected"] },
-            createdAt: { $gte: twelveMonthsAgo },
-          }),
+          $match: andFilters(
+            visible,
+            { status: { $in: ["Posted", "Rejected"] }, createdAt: { $gte: windowStart, $lte: windowEnd } },
+            orderExtra
+          ),
         },
         {
           $group: {
@@ -265,7 +295,7 @@ export async function GET(_req: NextRequest) {
       outcomeByKey.set(key, cur);
     }
 
-    data.volumeTrend = twelveMonthSlots().map(({ year, month }) => {
+    data.volumeTrend = monthSlots().map(({ year, month }) => {
       const key = `${year}-${month + 1}`; // Mongo's $month is 1-based
       const t = tonnageByKey.get(key);
       const o = outcomeByKey.get(key);
@@ -283,10 +313,10 @@ export async function GET(_req: NextRequest) {
     // above already sets in its own caption: lab data isn't confidentiality-
     // gated by the sales chain, samples aren't all linked to an order.
     const rows = await LabSample.aggregate([
-      { $match: { isActive: true, createdAt: { $gte: twelveMonthsAgo } } },
+      { $match: { isActive: true, sampleDate: { $gte: windowStart, $lte: windowEnd }, ...sampleExtra } },
       {
         $group: {
-          _id: { y: { $year: "$createdAt" }, m: { $month: "$createdAt" }, status: "$overallStatus" },
+          _id: { y: { $year: "$sampleDate" }, m: { $month: "$sampleDate" }, status: "$overallStatus" },
           n: { $sum: 1 },
         },
       },
@@ -298,7 +328,7 @@ export async function GET(_req: NextRequest) {
       cur[r._id.status as "pass" | "warning" | "fail"] = r.n;
       byKey.set(key, cur);
     }
-    data.qualityTrend = twelveMonthSlots().map(({ year, month }) => {
+    data.qualityTrend = monthSlots().map(({ year, month }) => {
       const key = `${year}-${month + 1}`;
       const c = byKey.get(key);
       const total = c ? c.pass + c.warning + c.fail : 0;
@@ -312,8 +342,15 @@ export async function GET(_req: NextRequest) {
   // ── M · Product mix — tonnage share, last 12 months, posted orders ───────
   if (want("productMix")) {
     const rows = await SalesOrder.aggregate([
-      { $match: andFilters(visible, { status: "Posted", postedAt: { $gte: twelveMonthsAgo } }) },
+      {
+        $match: andFilters(
+          visible,
+          { status: "Posted", postedAt: { $gte: windowStart, $lte: windowEnd } },
+          orderExtra
+        ),
+      },
       { $unwind: "$lines" },
+      ...(productId ? [{ $match: { "lines.productId": productId } }] : []),
       {
         $group: {
           _id: { productId: "$lines.productId", product: "$lines.product", productAr: "$lines.productAr" },

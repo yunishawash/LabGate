@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongoose";
 import { requireModule, requireRole } from "@/lib/requireSession";
 import {
-  badRequest, containsRegex, dateRange, oid, paging, readJson, str, oneOf,
+  badRequest, badStrictStr, containsRegex, dateRange, oid, paging, readJson, str, strictStr, oneOf,
 } from "@/lib/apiHelpers";
 import { createSalesOrder } from "@/lib/salesOrder";
 import { writeAudit } from "@/lib/audit";
@@ -190,8 +190,8 @@ export async function POST(req: NextRequest) {
   if (!customerId) return badRequest("A valid customerId is required");
 
   const customer = (await LabCustomer.findOne({ _id: customerId, isActive: true })
-    .select("name nameAr")
-    .lean()) as { name?: string; nameAr?: string } | null;
+    .select("name nameAr address")
+    .lean()) as { name?: string; nameAr?: string; address?: string } | null;
   if (!customer) return badRequest("Unknown customer");
 
   const orderDate = new Date(str(body.orderDate, 40));
@@ -204,6 +204,22 @@ export async function POST(req: NextRequest) {
     deliveryDate = d;
   }
 
+  const notesCheck = strictStr(body.notes, 5000, "Notes");
+  if (!notesCheck.ok) return badStrictStr(notesCheck);
+
+  // Printed on the MS-SC/F7 form. `customerAddress` falls back to the
+  // customer's own address so it is never blank at creation time, but once
+  // written it is frozen — a later edit to LabCustomer must not rewrite an
+  // already-approved paper trail.
+  const addressCheck = strictStr(body.customerAddress || customer.address || "", 500, "Customer address");
+  if (!addressCheck.ok) return badStrictStr(addressCheck);
+  const salesRepCheck = strictStr(body.salesRepName, 120, "Sales rep name");
+  if (!salesRepCheck.ok) return badStrictStr(salesRepCheck);
+  const agentCheck = strictStr(body.agentName, 120, "Agent name");
+  if (!agentCheck.ok) return badStrictStr(agentCheck);
+  const paymentMethod: "cash" | "deferred" | "" =
+    body.paymentMethod === "cash" || body.paymentMethod === "deferred" ? body.paymentMethod : "";
+
   const rawLines = Array.isArray(body.lines) ? body.lines : [];
   if (!rawLines.length) return badRequest("An order needs at least one line");
   if (rawLines.length > 50) return badRequest("An order cannot have more than 50 lines");
@@ -211,9 +227,11 @@ export async function POST(req: NextRequest) {
   const lines: Record<string, unknown>[] = [];
   let totalBags = 0;
   let totalWeightKg = 0;
+  let totalBonusBags = 0;
+  let totalBonusWeightKg = 0;
 
   for (const raw of rawLines) {
-    const row = raw as { productId?: unknown; bagWeightKg?: unknown; bagCount?: unknown; note?: unknown };
+    const row = raw as { productId?: unknown; bagWeightKg?: unknown; bagCount?: unknown; note?: unknown; bonusBags?: unknown };
 
     const productId = oid(row.productId);
     if (!productId) return badRequest("Every line needs a valid productId");
@@ -228,6 +246,9 @@ export async function POST(req: NextRequest) {
       return badRequest("Every line needs a whole bag count of at least 1");
     }
 
+    const noteCheck = strictStr(row.note, 500, "Line note");
+    if (!noteCheck.ok) return badStrictStr(noteCheck);
+
     const product = (await LabProduct.findOne({ _id: productId, isActive: true })
       .select("name nameAr")
       .lean()) as { name?: string; nameAr?: string } | null;
@@ -239,6 +260,16 @@ export async function POST(req: NextRequest) {
     totalBags += bagCount;
     totalWeightKg += lineWeightKg;
 
+    // A sales concession, tracked separately (SPEC decision): folding it into
+    // totalBags/totalWeightKg would silently rewrite the variance/report math
+    // those fields already feed.
+    const bonusBags = Number(row.bonusBags) || 0;
+    if (!Number.isInteger(bonusBags) || bonusBags < 0) {
+      return badRequest("Bonus bags must be a whole number of 0 or more");
+    }
+    totalBonusBags += bonusBags;
+    totalBonusWeightKg += bonusBags * bagWeightKg;
+
     lines.push({
       productId,
       product: product.name || "",
@@ -246,7 +277,8 @@ export async function POST(req: NextRequest) {
       bagWeightKg,
       bagCount,
       lineWeightKg,
-      note: str(row.note, 200),
+      note: noteCheck.value,
+      bonusBags,
     });
   }
 
@@ -258,10 +290,16 @@ export async function POST(req: NextRequest) {
       referenceNo: str(body.referenceNo, 60),
       orderDate,
       deliveryDate,
-      notes: str(body.notes, 2000),
+      notes: notesCheck.value,
+      customerAddress: addressCheck.value,
+      salesRepName: salesRepCheck.value,
+      agentName: agentCheck.value,
+      paymentMethod,
       lines,
       totalBags,
       totalWeightKg,
+      totalBonusBags,
+      totalBonusWeightKg,
     },
     { _id: userDoc._id, name: userDoc.name }
   );

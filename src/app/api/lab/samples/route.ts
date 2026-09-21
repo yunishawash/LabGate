@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongoose";
 import { requireRole, requireSession } from "@/lib/requireSession";
 import {
-  badRequest, containsRegex, dateRange, oid, paging, readJson, str, oneOf,
+  badRequest, badStrictStr, containsRegex, dateRange, oid, paging, readJson, str, strictStr, oneOf,
 } from "@/lib/apiHelpers";
 import LabSample from "@/models/LabSample";
 import LabProduct from "@/models/LabProduct";
@@ -86,6 +86,11 @@ export async function POST(req: NextRequest) {
   const sampleDate = new Date(str(body.sampleDate, 40));
   if (Number.isNaN(sampleDate.getTime())) return badRequest("A valid sampleDate is required");
 
+  const notesCheck = strictStr(body.notes, 5000, "Notes");
+  if (!notesCheck.ok) return badStrictStr(notesCheck);
+  const decisionNoteCheck = strictStr(body.finalDecisionNote, 2000, "Sign-off note");
+  if (!decisionNoteCheck.ok) return badStrictStr(decisionNoteCheck);
+
   const inputResults = Array.isArray(body.results) ? body.results : [];
   if (!inputResults.length) return badRequest("At least one result is required");
 
@@ -130,7 +135,7 @@ export async function POST(req: NextRequest) {
     decision && decision !== "pending" && canDecide
       ? {
           finalDecision: decision,
-          finalDecisionNote: str(body.finalDecisionNote, 1000),
+          finalDecisionNote: decisionNoteCheck.value,
           finalDecisionById: userDoc._id,
           finalDecisionByName: userDoc.name,
           finalDecisionAt: new Date(),
@@ -149,7 +154,7 @@ export async function POST(req: NextRequest) {
     testedByName: userDoc.name,
     results,
     overallStatus,
-    notes: str(body.notes, 2000),
+    notes: notesCheck.value,
     ...decisionFields,
   });
 

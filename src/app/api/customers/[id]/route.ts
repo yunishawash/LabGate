@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongoose";
 import { requireRole } from "@/lib/requireSession";
 import {
-  badRequest, conflict, notFound, oid, readJson, str,
+  badRequest, badStrictStr, conflict, notFound, oid, readJson, str, strictStr,
   normalizeName, isDuplicateKeyError,
 } from "@/lib/apiHelpers";
 import LabCustomer from "@/models/LabCustomer";
@@ -167,10 +167,19 @@ export async function PUT(req: NextRequest, { params }: Params) {
     update.nameKey = nameKey;
   }
   for (const [field, max] of [
-    ["nameAr", 200], ["code", 40], ["phone", 40],
-    ["contactName", 120], ["address", 400], ["notes", 1000],
+    ["nameAr", 200], ["code", 40], ["phone", 40], ["contactName", 120],
   ] as const) {
     if (field in body) update[field] = str(body[field], max);
+  }
+  // Longer free-text fields: rejected if too long, not silently truncated.
+  for (const [field, max, label] of [
+    ["address", 500, "Address"], ["notes", 4000, "Notes"],
+  ] as const) {
+    if (field in body) {
+      const r = strictStr(body[field], max, label);
+      if (!r.ok) return badStrictStr(r);
+      update[field] = r.value;
+    }
   }
 
   let updated;

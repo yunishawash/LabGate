@@ -214,7 +214,9 @@ export function ProductMix({
   return (
     <Card title={t("Product mix", "توزيع الأصناف")} icon={<PieChartIcon size={16} className="text-slate-500" />}>
       <div className="flex flex-col sm:flex-row items-center gap-4">
-        <div className="relative h-48 w-48 flex-shrink-0">
+        {/* Matches Quality trend's h-56 chart area, so the two cards read at
+            the same height when they sit side by side in the dashboard row. */}
+        <div className="relative h-56 w-56 flex-shrink-0">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie

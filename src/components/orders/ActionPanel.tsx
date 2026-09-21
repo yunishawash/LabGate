@@ -1,10 +1,11 @@
 "use client";
 import { useState } from "react";
-import { Check, X, Scale, FlaskConical, AlertTriangle, UserCheck, Lock } from "lucide-react";
+import { Check, X, Scale, FlaskConical, AlertTriangle, UserCheck, Lock, MessageSquareText } from "lucide-react";
 import { useLang } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { SALES_STAGES } from "@/lib/salesWorkflow";
 import { ROLE_LABELS, type UserRole } from "@/types";
 import type { OrderRow } from "@/components/orders/cells";
@@ -41,6 +42,7 @@ export function ActionPanel({
   const [rejectOpen, setRejectOpen] = useState(false);
   const [weighOpen, setWeighOpen] = useState(false);
   const [labOpen, setLabOpen] = useState(false);
+  const [reasonOpen, setReasonOpen] = useState(false);
 
   const stage = SALES_STAGES.find((s) => s.index === order.currentStageIndex);
   const standIn = p.actingAs;
@@ -81,10 +83,42 @@ export function ActionPanel({
       <aside className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
         <div className="flex items-center gap-2 text-sm text-slate-500">
           <Lock size={15} className="text-slate-400" />
-          {order.status === "Posted"
-            ? t("This order is posted and closed.", "هذه الطلبية مرحّلة ومغلقة.")
-            : t("This order was rejected and is closed.", "هذه الطلبية مرفوضة ومغلقة.")}
+          <span className="flex-1">
+            {order.status === "Posted"
+              ? t("This order is posted and closed.", "هذه الطلبية مرحّلة ومغلقة.")
+              : t("This order was rejected and is closed.", "هذه الطلبية مرفوضة ومغلقة.")}
+          </span>
+          {order.status === "Rejected" && order.rejection?.reason && (
+            <button
+              type="button"
+              onClick={() => setReasonOpen(true)}
+              title={t("View the reason", "عرض السبب")}
+              aria-label={t("View the reason", "عرض السبب")}
+              className="text-red-600 hover:text-red-700 cursor-pointer flex-shrink-0"
+            >
+              <MessageSquareText size={16} />
+            </button>
+          )}
         </div>
+
+        <Dialog open={reasonOpen} onOpenChange={setReasonOpen}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-red-800">
+                <X size={16} />
+                {t("Rejection reason", "سبب الرفض")}
+              </DialogTitle>
+            </DialogHeader>
+            {order.rejection?.byName && (
+              <p className="text-sm text-slate-500">
+                {t("Rejected by", "رفضها")} {order.rejection.byName}
+              </p>
+            )}
+            <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 whitespace-pre-wrap break-words max-h-[60vh] overflow-y-auto">
+              {order.rejection?.reason}
+            </p>
+          </DialogContent>
+        </Dialog>
       </aside>
     );
   }

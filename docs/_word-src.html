@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LabGate — Software Requirements Specification</title>
+<style>
+body{font-family:Calibri,'Segoe UI',sans-serif;font-size:11pt;color:#1a1a1a;line-height:1.45}
+h1{font-family:Cambria,Georgia,serif;font-size:26pt;color:#0E4F54;margin:0 0 6pt}
+h2{font-family:Cambria,Georgia,serif;font-size:17pt;color:#0E4F54;margin:22pt 0 6pt;border-bottom:1px solid #C2CBC6;padding-bottom:3pt}
+h3{font-family:Calibri,sans-serif;font-size:12.5pt;color:#0E4F54;margin:16pt 0 5pt}
+h4{font-family:Calibri,sans-serif;font-size:11pt;color:#333;margin:12pt 0 4pt}
+p{margin:0 0 8pt}
+.sub{font-family:Cambria,Georgia,serif;font-size:13pt;color:#444;font-style:italic;margin:0 0 4pt}
+.ar{font-family:'Segoe UI','Arial Unicode MS',Arial,sans-serif;direction:rtl}
+table{border-collapse:collapse;width:100%;margin:6pt 0 12pt;font-size:10pt}
+th{background:#E1EDEC;color:#0E4F54;text-align:left;font-weight:bold;border:1px solid #C2CBC6;padding:5pt 6pt}
+td{border:1px solid #C2CBC6;padding:5pt 6pt;vertical-align:top}
+td.id{font-family:Consolas,'Courier New',monospace;font-size:9pt;color:#0E4F54;white-space:nowrap;width:70px}
+td.num{white-space:nowrap}
+ul,ol{margin:0 0 8pt 0;padding-left:20pt}
+li{margin-bottom:3pt}
+.note{border-left:3px solid #0E4F54;background:#F3F7F7;padding:7pt 10pt;margin:6pt 0 12pt}
+.note b{color:#0E4F54;text-transform:uppercase;font-size:8.5pt;letter-spacing:.06em}
+.warn{border-left-color:#B45309;background:#FBF6EC}
+.warn b{color:#9A4A09}
+.pass{color:#047857;font-weight:bold}
+.warncol{color:#9A4A09;font-weight:bold}
+.fail{color:#B91C1C;font-weight:bold}
+.meta td{border:none;padding:2pt 10pt 2pt 0;font-size:10pt}
+.meta td.k{color:#666;width:130px}
+</style>
+</head>
+<body>
+
+<h1>LabGate — Software Requirements Specification</h1>
+<p class="sub">Sales Order Approval Chain &amp; Laboratory Quality Control System</p>
+<p class="sub ar">نظام المختبر وسلسلة الموافقات</p>
+<p><b>Golden Wheat Mills Company (GWMC)</b></p>
+
+<table class="meta">
+<tr><td class="k">Document type</td><td>Software Requirements Specification / Business Analysis</td></tr>
+<tr><td class="k">System name</td><td>LabGate</td></tr>
+<tr><td class="k">Client</td><td>Golden Wheat Mills Company (GWMC)</td></tr>
+<tr><td class="k">Version</td><td>1.0</td></tr>
+<tr><td class="k">Date</td><td>15 September 2026</td></tr>
+<tr><td class="k">Status</td><td>For business review</td></tr>
+<tr><td class="k">Audience</td><td>Business owners, department managers, QA management, project sponsor</td></tr>
+</table>
+
+<h2>1. Executive Summary</h2>
+<p>LabGate is a web application that governs two things the mill currently runs on paper and on trust: <b>who is allowed to release a customer order</b>, and <b>whether the flour in that order meets specification</b>.</p>
+<p>Today a sales order travels between desks as a paper form or a verbal approval. Nobody can state, at a given moment, where an order is, who is holding it up, or how long it has been sitting there. Separately, the laboratory records its test results in spreadsheets that live on one machine, so quality history cannot be linked to the customer who received the goods.</p>
+<p>LabGate replaces both with one controlled process:</p>
+<ol>
+<li>An order is raised by the sales department and walks a <b>fixed eight-stage approval chain</b> through Sales, Finance, General Management and Production.</li>
+<li>At stage six the <b>laboratory records the quality test results</b> for the ordered flour grade, and the system judges each reading against the approved specification automatically — no manual interpretation.</li>
+<li>Two managers <b>sign off on the results jointly</b> before the goods may leave.</li>
+<li>The <b>weighbridge records the actual net weight</b>, the system calculates the variance against what was ordered, and the order is posted.</li>
+</ol>
+<p>Every signature, rejection, delegation and edit is recorded permanently with the name of the person and the capacity they acted in. Nothing in the chain can be skipped, back-dated or reversed.</p>
+<p>The system is <b>bilingual (Arabic / English)</b> with full right-to-left support, runs on the plant's own server with no dependency on internet connectivity, and is deliberately separate from the existing maintenance system (CMMS) in both database and login.</p>
+
+<h2>2. Business Context</h2>
+
+<h3>2.1 The organisation</h3>
+<p>Golden Wheat Mills is a flour milling operation that sells bagged flour in several grades to bakeries, food companies and traders. Product is sold by the bag — 10, 25, 30, 50 or 60 kg — and delivered by truck across a weighbridge.</p>
+<p>The company already operates an in-house <b>CMMS</b> (maintenance management system) for plant equipment. LabGate is a separate commercial and quality system; the two share a visual design and an IT platform but no data and no user accounts.</p>
+
+<h3>2.2 The problem being solved</h3>
+<table>
+<tr><th>ID</th><th>Current pain</th><th>Business consequence</th></tr>
+<tr><td class="id">P1</td><td>An order's approval status is visible only to the person holding it</td><td>Sales cannot answer "where is my order?"; management cannot see the pipeline</td></tr>
+<tr><td class="id">P2</td><td>Approvals are given verbally or on paper, sometimes out of sequence</td><td>No defensible record of who authorised a shipment</td></tr>
+<tr><td class="id">P3</td><td>Order quantities can be changed after a manager has approved them</td><td>Financial exposure — finance approves one figure and a different one ships</td></tr>
+<tr><td class="id">P4</td><td>Lab results live in spreadsheets, judged by eye against a printed spec sheet</td><td>Inconsistent pass/fail calls; borderline results treated differently by different technicians</td></tr>
+<tr><td class="id">P5</td><td>Quality history is not linked to the customer or the delivery</td><td>A complaint cannot be traced back to the batch and its readings</td></tr>
+<tr><td class="id">P6</td><td>When a manager is absent, the order simply stops</td><td>Orders sit for days with nobody aware</td></tr>
+<tr><td class="id">P7</td><td>Actual delivered weight is never compared to ordered weight</td><td>Over- and under-delivery goes unquantified</td></tr>
+<tr><td class="id">P8</td><td>No reporting on cycle time, rejection reasons or quality trend</td><td>Improvement decisions are made on anecdote</td></tr>
+</table>
+
+<h3>2.3 Business objectives</h3>
+<table>
+<tr><th>ID</th><th>Objective</th><th>How it is measured</th></tr>
+<tr><td class="id">O1</td><td>Make the location and age of every live order visible to those entitled to see it</td><td>Pipeline board shows count and tonnage at each of the eight stages, in real time</td></tr>
+<tr><td class="id">O2</td><td>Guarantee an auditable authorisation trail for every released order</td><td>100% of posted orders carry eight recorded, attributed signatures</td></tr>
+<tr><td class="id">O3</td><td>Remove human judgement from routine pass/fail decisions</td><td>Every reading carries a system-calculated verdict against the frozen specification</td></tr>
+<tr><td class="id">O4</td><td>Link quality to the customer and the batch</td><td>Any customer's full quality history retrievable on one screen</td></tr>
+<tr><td class="id">O5</td><td>Prevent quantity changes after financial approval</td><td>Editing is blocked beyond the first approval</td></tr>
+<tr><td class="id">O6</td><td>Reduce time lost to absence</td><td>Deputy and delegation rules keep the chain moving; unstaffed roles are flagged before they block an order</td></tr>
+<tr><td class="id">O7</td><td>Quantify delivery accuracy</td><td>Variance (ordered vs actual net weight) reported per customer and per product</td></tr>
+<tr><td class="id">O8</td><td>Give management a weekly evidence base</td><td>Eight standing management views across Reports, Dashboard and Lab, plus Excel export</td></tr>
+</table>
+
+<h3>2.4 Scope</h3>
+<h4>In scope</h4>
+<ul>
+<li>Sales order capture with multiple product lines</li>
+<li>The eight-stage approval chain, including rejection</li>
+<li>Absence marking and named delegation of signing authority</li>
+<li>Laboratory sample recording, automatic scoring, and attachments</li>
+<li>Product specification catalogue — parameters, limits, per-product overrides</li>
+<li>Customer master data</li>
+<li>Joint (dual) sign-off on laboratory results</li>
+<li>Weighbridge net-weight capture, variance calculation and posting</li>
+<li>Role-composed dashboard, in-app notifications, management reports</li>
+<li>Excel export, audit trail, user administration, system health</li>
+<li>Arabic / English interface, both reading directions</li>
+</ul>
+<h4>Out of scope (deliberately excluded — see section 12)</h4>
+<ul>
+<li>Printable / PDF order sheet with signature block</li>
+<li>Email or SMS notification</li>
+<li>Laboratory instrument register and calibration tracking</li>
+<li>Invoicing, pricing, credit control, accounts receivable</li>
+<li>Inventory, production planning, silo or stock management</li>
+<li>Truck, driver, gross and tare weight capture (net weight only, by client decision)</li>
+<li>Integration with the maintenance CMMS or any external ERP</li>
+<li>A native mobile application</li>
+</ul>
+
+<h2>3. Stakeholders and User Roles</h2>
+<p>The system recognises <b>nine roles</b>. A role is not a job title — it is a grant of authority. Changing a person's role changes what they may sign, which is why every role change is recorded in the audit trail.</p>
+<table>
+<tr><th>Role</th><th>Arabic</th><th>Responsibility in the system</th></tr>
+<tr><td><b>Administrator</b></td><td class="ar">مدير النظام</td><td>Full access. Manages users, roles, permissions, delegations and the product catalogue. May act on any stage.</td></tr>
+<tr><td><b>Sales Coordinator</b></td><td class="ar">منسّق المبيعات</td><td>Raises orders. Sees their own orders only.</td></tr>
+<tr><td><b>Sales Manager</b></td><td class="ar">مدير المبيعات</td><td>Approves at stage 2. May also raise an order. Deputy for the coordinator.</td></tr>
+<tr><td><b>Finance Manager</b></td><td class="ar">المدير المالي</td><td>Approves at stage 3. Deputy for the General Manager.</td></tr>
+<tr><td><b>Accounts Officer</b></td><td class="ar">مسؤول الحسابات</td><td>Deputy for the Finance Manager only. No stage of their own.</td></tr>
+<tr><td><b>General Manager</b></td><td class="ar">المدير العام</td><td>Approves at stage 4, co-signs at stage 7. Sees <b>every</b> order from creation, and may reject at any stage.</td></tr>
+<tr><td><b>Technical Manager</b></td><td class="ar">المدير التقني</td><td>Approves at stage 5 (production feasibility), co-signs at stage 7.</td></tr>
+<tr><td><b>Lab Technician</b></td><td class="ar">فني المختبر</td><td>Records results at stage 6, and routine production QC samples not tied to any order.</td></tr>
+<tr><td><b>Weighbridge Operator</b></td><td class="ar">مشغّل الميزان</td><td>Records the actual net weight at stage 8 and posts the order.</td></tr>
+</table>
+<p><b>Secondary stakeholders:</b> QA management (consumes quality reports), IT administration (backup, deployment), external auditors (consume the audit trail).</p>
+
+<h3>3.1 Module permissions</h3>
+<p>Beyond the role, each user carries a list of <b>module permissions</b> controlling which screens they may open: Orders, Lab, Customers, Reports, Users, Audit Trail, System Health. Administrators bypass the check. Dashboard, Approvals, Results Sign-off, Rejections and Notifications are open to every signed-in user.</p>
+<div class="note"><p><b>Why it is built this way</b></p><p>This gives the business two independent levers: <i>what a person may sign</i> (their role) and <i>what a person may look at</i> (their permissions). A new analyst can be given read access to Reports without being handed any signing authority at all.</p></div>
+
+<h2>4. The Core Business Process — The Eight-Stage Chain</h2>
+<p>Every order walks the same eight stages in the same order. No stage can be skipped and the chain never runs backwards.</p>
+
+<h3>4.1 The chain</h3>
+<table>
+<tr><th>#</th><th>Stage</th><th>Arabic</th><th>Owner</th><th>Deputy (only while the owner is absent)</th><th>Nature</th></tr>
+<tr><td class="num">1</td><td>Order created</td><td class="ar">إنشاء الطلب</td><td>Sales Coordinator</td><td>Sales Manager, or a named delegate</td><td>Data entry</td></tr>
+<tr><td class="num">2</td><td>Sales Manager approval</td><td class="ar">مدير المبيعات</td><td>Sales Manager</td><td>Sales Coordinator</td><td>Approval</td></tr>
+<tr><td class="num">3</td><td>Finance Manager approval</td><td class="ar">المدير المالي</td><td>Finance Manager</td><td>Accounts Officer</td><td>Approval</td></tr>
+<tr><td class="num">4</td><td>General Manager approval</td><td class="ar">المدير العام</td><td>General Manager</td><td>Finance Manager</td><td>Approval</td></tr>
+<tr><td class="num">5</td><td>Technical Manager approval</td><td class="ar">المدير التقني</td><td>Technical Manager</td><td class="warncol">None — business decision</td><td>Approval</td></tr>
+<tr><td class="num">6</td><td>Laboratory results</td><td class="ar">نتائج المختبر</td><td>Lab Technician</td><td>A named delegate</td><td>Data entry</td></tr>
+<tr><td class="num">7</td><td>Results sign-off — <b>both together</b></td><td class="ar">اعتماد النتائج</td><td>General Manager <b>and</b> Technical Manager</td><td class="warncol">None — business decision</td><td>Dual approval</td></tr>
+<tr><td class="num">8</td><td>Weighbridge and posting</td><td class="ar">الميزان والترحيل</td><td>Weighbridge Operator</td><td class="warncol">None — business decision</td><td>Weigh → Posted</td></tr>
+</table>
+<div class="note warn"><p><b>The stall is deliberate</b></p><p>Stages 5, 7 and 8 have no automatic deputy. The business decided that an absent Technical Manager should <b>stall the order visibly</b> rather than have the approval pass silently to someone else. The stall is surfaced on the dashboard, on the System Health screen, and by notification to administrators. Whether this remains the right call is decision D1 (section 13).</p></div>
+
+<h3>4.2 Order lifecycle states</h3>
+<p>An order is in exactly one of three states:</p>
+<ul>
+<li><b>In progress</b> (<span class="ar">قيد الإجراء</span>) — somewhere between stage 1 and stage 8</li>
+<li><b>Posted</b> (<span class="ar">مرحّلة</span>) — completed stage 8; weighed and released</li>
+<li><b>Rejected</b> (<span class="ar">مرفوضة</span>) — terminated by an approver; permanently closed</li>
+</ul>
+
+<h3>4.3 Process narrative</h3>
+<h4>Creation</h4>
+<p>A Sales Coordinator (or the Sales Manager) selects a customer, an order date, an optional delivery date, and one or more <b>order lines</b>. Each line is a flour grade, a bag size and a bag count. The system calculates the line weight, the total bag count and the total tonnage — these are never accepted from the user. An optional <b>departmental reference number</b> records the order's number in the sales department's own books, so the two sets of records reconcile. The order is issued a permanent number in the form ORD-2026-000123, and the chain moves immediately to stage 2.</p>
+<h4>Commercial approval — stages 2 to 4</h4>
+<p>Sales, Finance and the General Manager each approve in turn, optionally with a note. Nobody sees the order until the person before them has approved — except the General Manager, who sees every order from creation.</p>
+<h4>Production approval — stage 5</h4>
+<p>The Technical Manager confirms the mill can produce the grades and quantities ordered.</p>
+<h4>Laboratory — stage 6</h4>
+<p>The laboratory draws a sample against the ordered flour grade and enters the readings. The system compares each reading to the specification for that grade and returns a verdict per reading and an overall verdict for the sample. This stage is <b>data entry, not approval</b> — the lab records a fact; it does not authorise anything.</p>
+<h4>Joint sign-off — stage 7</h4>
+<p>The General Manager and the Technical Manager each sign the results. <b>This is a gate, not a race</b>: whoever signs first waits for the other, and the order does not advance until both signatures are recorded.</p>
+<h4>Weighbridge and posting — stage 8</h4>
+<p>The operator records the <b>actual net weight only</b> — no truck, driver, gross or tare. The system calculates the variance in kilograms and as a percentage of the ordered quantity, and posts the order in the same action, so an order can never be left weighed but unposted.</p>
+
+<h3>4.4 Rejection</h3>
+<p>Rejection is a first-class outcome, not an error path.</p>
+<ul>
+<li>Any approver may reject the order currently at their stage, <b>with a written reason</b> (mandatory).</li>
+<li>The <b>General Manager and the Administrator may reject at any stage</b>, whether or not the order is currently with them.</li>
+<li><b>Rejection is terminal.</b> There is no return-to-edit and no resubmission. The order is closed and a new one must be raised. The reason, the stage, the person and the timestamp are kept permanently and feed the Rejections report.</li>
+</ul>
+<div class="note"><p><b>Why terminal</b></p><p>An order that can be edited and resubmitted has no single authoritative version, and the approvals already collected against the old version become meaningless. Traceability is the reason the chain exists; a reopen path would quietly remove it.</p></div>
+
+<h2>5. Business Rules</h2>
+<p>These are the rules the system enforces. They are listed here because each is a business decision, not a technical one — every one of them can be changed, but only deliberately.</p>
+
+<h3>5.1 Authority and visibility</h3>
+<table>
+<tr><th>ID</th><th>Rule</th></tr>
+<tr><td class="id">BR-01</td><td>A user sees an order only once it has reached the earliest stage their role owns. Before that the order does not exist for them — not in lists, counts, searches, reports or exports.</td></tr>
+<tr><td class="id">BR-02</td><td>The General Manager sees every order from the moment of creation.</td></tr>
+<tr><td class="id">BR-03</td><td>A Sales Coordinator sees only the orders they personally created — not those of other coordinators. (See decision D3.)</td></tr>
+<tr><td class="id">BR-04</td><td>Anyone who has ever acted on an order keeps read access to it permanently, even after a later change of role.</td></tr>
+<tr><td class="id">BR-05</td><td>A creator always sees their own orders, whatever their role.</td></tr>
+<tr><td class="id">BR-06</td><td>Only the owner of the current stage — or a valid deputy, a delegate, or an administrator — may act on it.</td></tr>
+<tr><td class="id">BR-07</td><td>One person may legitimately hold two consecutive stages, e.g. the Sales Manager raises an order and then approves it. Permitted so the chain does not freeze when staffing is thin, and shown plainly on the approval ladder. (See decision D2.)</td></tr>
+</table>
+
+<h3>5.2 Editing and integrity</h3>
+<table>
+<tr><th>ID</th><th>Rule</th></tr>
+<tr><td class="id">BR-08</td><td>An order may be edited only by its creator or an administrator, and only while it is still at stage 2 — that is, <b>before the first approval</b>. After that it is frozen.</td></tr>
+<tr><td class="id">BR-09</td><td>All weights and totals are calculated by the system from bag size × bag count. A total supplied by the browser is never trusted.</td></tr>
+<tr><td class="id">BR-10</td><td>Bag sizes are restricted to 10, 25, 30, 50 and 60 kg. No other value is accepted.</td></tr>
+<tr><td class="id">BR-11</td><td>An order must have at least one line, and each line must have a bag count of at least one.</td></tr>
+<tr><td class="id">BR-12</td><td>The order number is allocated by the system, is unique, and cannot be edited. The departmental reference is free text, optional, and deliberately <b>not</b> unique — it originates in a system the mill does not control, and refusing a repeat would block legitimate work.</td></tr>
+<tr><td class="id">BR-13</td><td>An order never moves backwards in the chain. With terminal rejection, this guarantees the progress record is monotonic and therefore trustworthy.</td></tr>
+</table>
+
+<h3>5.3 Absence and delegation</h3>
+<table>
+<tr><th>ID</th><th>Rule</th></tr>
+<tr><td class="id">BR-14</td><td>A user may be marked <b>absent</b>, optionally with a date range and a note. Marking absence moves signing authority, so every change is audited.</td></tr>
+<tr><td class="id">BR-15</td><td>A <b>deputy</b> may act on a stage only while no active, present user holds the owning role. A deputy is not a second approver; the route opens only when the desk is genuinely empty.</td></tr>
+<tr><td class="id">BR-16</td><td>A <b>delegation</b> is a deliberate hand-over of one role to one named person for a fixed period. Unlike a deputy, it works whether or not the primary is absent.</td></tr>
+<tr><td class="id">BR-17</td><td>A delegation <b>must have an end date</b>. A delegation with no expiry is a permanent transfer of authority by accident.</td></tr>
+<tr><td class="id">BR-18</td><td>A signature made by a deputy or a delegate is always recorded and displayed as "on behalf of [role]" — never as the primary's own signature.</td></tr>
+<tr><td class="id">BR-19</td><td>Creating, amending or revoking a delegation is audited exactly like an approval.</td></tr>
+</table>
+
+<h3>5.4 Laboratory and quality</h3>
+<p>Every measured value is judged automatically against the limits that apply to that product. The technician cannot set the verdict. The verdict has three levels:</p>
+<table>
+<tr><th>Verdict</th><th>Arabic</th><th>Meaning</th></tr>
+<tr><td class="pass">In spec</td><td class="ar">مطابق</td><td>Comfortably inside the accepted range</td></tr>
+<tr><td class="warncol">Warning</td><td class="ar">تحذير</td><td>Still inside the range, but within 15% of the range width of a limit</td></tr>
+<tr><td class="fail">Out of range</td><td class="ar">خارج النطاق</td><td>Outside the accepted limits</td></tr>
+</table>
+<p>The 15% warning band reproduces the QA department's existing workbook rule exactly, so verdicts are directly comparable to what QA already reports.</p>
+<table>
+<tr><th>ID</th><th>Rule</th></tr>
+<tr><td class="id">BR-20</td><td>Every measured value is judged automatically against the limits for that product. The technician cannot set the verdict.</td></tr>
+<tr><td class="id">BR-21</td><td>The verdict has three levels — in spec, warning, out of range — as defined above.</td></tr>
+<tr><td class="id">BR-22</td><td>A sample is only as good as its worst reading: any out-of-range reading makes the whole sample out of range; otherwise any warning makes it a warning; otherwise it passes.</td></tr>
+<tr><td class="id">BR-23</td><td>The limits that applied <b>at the moment of testing are frozen onto the record</b>. If a specification is revised later, historical results keep the limits they were actually judged against. A QC record must stay historically accurate.</td></tr>
+<tr><td class="id">BR-24</td><td>A parameter may be <i>informational only</i> — Colour L*, for instance — in which case it is recorded and charted but never fails.</td></tr>
+<tr><td class="id">BR-25</td><td>Specifications are held at two levels: a default limit per parameter, and an optional per-product override. The override wins where one exists.</td></tr>
+<tr><td class="id">BR-26</td><td>A laboratory sample <b>does not require an order</b>. Routine production QC — shift sampling, batch lots, ad-hoc tests — is recorded without an order and is a full citizen in every list, chart, KPI and export.</td></tr>
+<tr><td class="id">BR-27</td><td>Beyond the automatic verdict, the Technical Manager may record a separate <b>human decision</b> on a sample — accept a borderline failure with justification, or reject an otherwise-passing sample for other reasons. The automatic verdict is the measurement; the decision is the judgement.</td></tr>
+<tr><td class="id">BR-28</td><td>Stage 7 signs off on the <b>order</b>; the sample decision signs off on the <b>sample</b>. They are deliberately separate records.</td></tr>
+<tr><td class="id">BR-29</td><td>Documents may be attached to a sample — a certificate of analysis scan, a sample photograph. Each attachment is individually removable.</td></tr>
+</table>
+
+<h3>5.5 Customers</h3>
+<table>
+<tr><th>ID</th><th>Rule</th></tr>
+<tr><td class="id">BR-30</td><td>Customer records are <b>plant-wide</b>, shared by the commercial and the quality sides. An order is placed <i>by</i> a customer and a sample is judged <i>for</i> one; both must point at the same record, or the "tonnage and quality per customer" view cannot exist.</td></tr>
+<tr><td class="id">BR-31</td><td>Duplicate customer names are refused. The comparison ignores case and extra spacing, so "Al Amal", "AL AMAL" and "Al  Amal" are one customer, not three — enforced by the database itself, not by a check two simultaneous entries could both pass.</td></tr>
+<tr><td class="id">BR-32</td><td>Customers are created only by an administrator or the Sales Manager — never silently created by typing a new name into a form. Splitting a year of tonnage across three spellings of one bakery is the specific failure this prevents.</td></tr>
+<tr><td class="id">BR-33</td><td>A customer is <b>archived, never deleted</b>. An archived customer disappears from every selection list — a new order against one is refused — while existing records keep their name.</td></tr>
+<tr><td class="id">BR-34</td><td>Restoring an archived customer is refused if the name has since been taken by another record, with an explanation rather than a technical error.</td></tr>
+</table>
+
+<h3>5.6 Weighing</h3>
+<table>
+<tr><th>ID</th><th>Rule</th></tr>
+<tr><td class="id">BR-35</td><td>Only the actual <b>net weight</b> is captured. Truck, driver, gross and tare are explicitly out of scope, by client decision.</td></tr>
+<tr><td class="id">BR-36</td><td>Variance is calculated by the system as actual minus ordered, both in kilograms and as a percentage of the ordered quantity.</td></tr>
+<tr><td class="id">BR-37</td><td>Weighing and posting happen in a single action. There is no intermediate "weighed but not posted" state.</td></tr>
+<tr><td class="id">BR-38</td><td>Orders beyond ±1% variance are listed as outliers in the variance report.</td></tr>
+</table>
+
+<h3>5.7 Ageing and escalation</h3>
+<table>
+<tr><th>ID</th><th>Rule</th></tr>
+<tr><td class="id">BR-39</td><td>An order waiting more than <b>24 hours</b> at one desk is shown in amber.</td></tr>
+<tr><td class="id">BR-40</td><td>An order waiting more than <b>48 hours</b> is shown in red and counted as <i>stuck</i> — on the dashboard alert strip, the pipeline board and the System Health screen. Two working days is the point at which a held order stops being "busy" and starts being "forgotten".</td></tr>
+<tr><td class="id">BR-41</td><td>Reports state real durations and never apply the threshold. The 24/48-hour line is a display rule for daily work, not a fact recorded in the data.</td></tr>
+<tr><td class="id">BR-42</td><td>If <b>no active user holds a role</b>, an order reaching that stage would park silently. The system detects this and notifies administrators by name of the missing role — "No active user holds role Finance Manager — order ORD-2026-000007 is stalled."</td></tr>
+</table>
+
+<h2>6. Functional Requirements</h2>
+
+<h3>6.1 Authentication and access</h3>
+<table>
+<tr><th>ID</th><th>Requirement</th></tr>
+<tr><td class="id">FR-1.1</td><td>Users sign in with an email address and a password. Passwords are stored hashed, never in readable form.</td></tr>
+<tr><td class="id">FR-1.2</td><td>A deactivated user cannot sign in, and their existing session stops working immediately.</td></tr>
+<tr><td class="id">FR-1.3</td><td>Every signed-in user lands on the dashboard; its content is assembled according to their role.</td></tr>
+<tr><td class="id">FR-1.4</td><td>Opening a screen the user lacks permission for redirects them rather than showing an error.</td></tr>
+<tr><td class="id">FR-1.5</td><td>The system keeps its own user accounts and its own login, entirely separate from the maintenance CMMS. A person needing both holds two accounts — see risk R2.</td></tr>
+</table>
+
+<h3>6.2 Order management</h3>
+<table>
+<tr><th>ID</th><th>Requirement</th></tr>
+<tr><td class="id">FR-2.1</td><td>Create an order: customer, order date, optional delivery date, optional departmental reference, optional notes, and one or more lines (product, bag size, bag count, optional line note).</td></tr>
+<tr><td class="id">FR-2.2</td><td>The system allocates the order number and computes line weights, total bags and total tonnage.</td></tr>
+<tr><td class="id">FR-2.3</td><td>Edit an order while it is still at stage 2, restricted to the creator or an administrator.</td></tr>
+<tr><td class="id">FR-2.4</td><td>Orders Overview: a filterable, sortable, paginated list showing order number, customer, tonnage, current stage, waiting time and status. Filters for status, stage, customer, date range, free-text search and a "waiting on me" toggle.</td></tr>
+<tr><td class="id">FR-2.5</td><td>Order detail screen: the line list, the totals, the approval ladder, the laboratory results, the weighing record, and the action panel appropriate to the viewer.</td></tr>
+<tr><td class="id">FR-2.6</td><td><b>Approval ladder</b> — every stage in order, its owner, its status, who acted, when, in what capacity ("on behalf of…"), and any note.</td></tr>
+<tr><td class="id">FR-2.7</td><td><b>Action panel</b> — the viewer is shown only the actions they may actually take on this order right now. A read-only viewer sees no controls at all.</td></tr>
+<tr><td class="id">FR-2.8</td><td>Approve, with an optional note.</td></tr>
+<tr><td class="id">FR-2.9</td><td>Reject, with a mandatory reason.</td></tr>
+<tr><td class="id">FR-2.10</td><td>Order history: the full audit entries for that order, on the order screen.</td></tr>
+<tr><td class="id">FR-2.11</td><td>Archive an order (administrator only) — reversible removal from view, not deletion.</td></tr>
+</table>
+
+<h3>6.3 Concurrency</h3>
+<table>
+<tr><th>ID</th><th>Requirement</th></tr>
+<tr><td class="id">FR-3.1</td><td>Two people acting on the same order at the same moment must not corrupt it. Each action asserts the state it depends on; the second is refused with "This order has already moved on — reload to see where it is."</td></tr>
+<tr><td class="id">FR-3.2</td><td>At the joint sign-off, two managers clicking approve within the same second is the <b>normal</b> case. Both signatures must be recorded; the order advances exactly once, when the second one lands.</td></tr>
+</table>
+
+<h3>6.4 Laboratory</h3>
+<table>
+<tr><th>ID</th><th>Requirement</th></tr>
+<tr><td class="id">FR-4.1</td><td>Record a sample: product, date, shift (morning / afternoon / night), batch identifier, customer (optional), order (optional), and a value for each parameter in that product's specification.</td></tr>
+<tr><td class="id">FR-4.2</td><td>As values are entered, the applicable limit, target and verdict are shown per parameter, and the overall verdict for the sample.</td></tr>
+<tr><td class="id">FR-4.3</td><td>Sample numbers are allocated by the system in the form LAB-2026-0001.</td></tr>
+<tr><td class="id">FR-4.4</td><td>Results list: filter by product, customer, verdict, shift, parameter and date range; text search on sample and batch numbers.</td></tr>
+<tr><td class="id">FR-4.5</td><td>Sample detail: every reading with its limits, its deviation from target and its verdict, the attachments, and the human decision if one has been recorded.</td></tr>
+<tr><td class="id">FR-4.6</td><td>Edit a sample. Editing re-scores every reading through the same rules used at creation — a verdict supplied by the browser is never accepted on either path.</td></tr>
+<tr><td class="id">FR-4.7</td><td>Attach and remove files on a sample.</td></tr>
+<tr><td class="id">FR-4.8</td><td>Record the human accept / reject decision with a justification note (restricted).</td></tr>
+<tr><td class="id">FR-4.9</td><td><b>Control chart</b> — one parameter's readings over time, with the limit lines and the warning band drawn.</td></tr>
+<tr><td class="id">FR-4.10</td><td>Record a sample directly against an order at stage 6, linking it to the order and advancing the chain.</td></tr>
+</table>
+
+<h3>6.5 Product specification catalogue</h3>
+<table>
+<tr><th>ID</th><th>Requirement</th></tr>
+<tr><td class="id">FR-5.1</td><td>Maintain the product list (flour grades), bilingual, with archive.</td></tr>
+<tr><td class="id">FR-5.2</td><td>Maintain the parameter list: name, unit, comparison type (not more than / not less than / range / informational), default minimum, maximum and target, and display order.</td></tr>
+<tr><td class="id">FR-5.3</td><td>Maintain per-product overrides of any parameter's limits.</td></tr>
+<tr><td class="id">FR-5.4</td><td>A product-centric specification screen showing, for one product, every parameter with its effective limits and whether that limit is a default or an override.</td></tr>
+<tr><td class="id">FR-5.5</td><td>The catalogue ships pre-loaded with the mill's eight flour grades and eleven parameters, listed below.</td></tr>
+</table>
+<h4>The catalogue as delivered</h4>
+<table>
+<tr><th>Parameter</th><th>Arabic</th><th>Unit</th><th>Rule</th><th>Limit</th></tr>
+<tr><td>Moisture</td><td class="ar">الرطوبة</td><td>%</td><td>Not more than</td><td class="num">14.0</td></tr>
+<tr><td>Protein</td><td class="ar">البروتين</td><td>%</td><td>Not less than</td><td class="num">11.0</td></tr>
+<tr><td>Wet Gluten</td><td class="ar">الغلوتين الرطب</td><td>%</td><td>Not less than</td><td class="num">24.0</td></tr>
+<tr><td>Gluten Index</td><td class="ar">مؤشر الغلوتين</td><td>%</td><td>Not less than</td><td class="num">85</td></tr>
+<tr><td>Falling Number</td><td class="ar">رقم السقوط</td><td>sec</td><td>Not less than</td><td class="num">260</td></tr>
+<tr><td>Water Absorption</td><td class="ar">امتصاص الماء</td><td>%</td><td>Not less than</td><td class="num">55.0</td></tr>
+<tr><td>Ash</td><td class="ar">الرماد</td><td>%</td><td>Not more than</td><td class="num">0.65</td></tr>
+<tr><td>Zeleny</td><td class="ar">زيليني</td><td>ml</td><td>Not less than</td><td class="num">26.0</td></tr>
+<tr><td>Damaged Starch</td><td class="ar">النشا المتضرر</td><td>%</td><td>Range</td><td class="num">1.5 – 5.0</td></tr>
+<tr><td>Colour L*</td><td class="ar">اللون *L</td><td>L*</td><td>Informational</td><td class="num">—</td></tr>
+<tr><td>Energy (W)</td><td class="ar">الطاقة (W)</td><td>10e-4J</td><td>Not less than</td><td class="num">200</td></tr>
+</table>
+<p>Default limits, overridable per grade. The eight grades: <b>WFP, 302, 305, Bab 1, Bab 2, Sanabel, Fakher, Super</b>.</p>
+
+<h3>6.6 Customers</h3>
+<table>
+<tr><th>ID</th><th>Requirement</th></tr>
+<tr><td class="id">FR-6.1</td><td>Maintain customers: name (English and Arabic), customer code, phone, contact name, address, notes.</td></tr>
+<tr><td class="id">FR-6.2</td><td>Create, edit, archive and restore, restricted to administrator and Sales Manager.</td></tr>
+<tr><td class="id">FR-6.3</td><td>Customer list with search and an archived / active filter.</td></tr>
+<tr><td class="id">FR-6.4</td><td><b>Customer profile</b> — the commercial and the quality view of one customer on one screen: order count, tonnage ordered, posted and rejected, average cycle time, rejection rate, and that customer's full laboratory quality history with in-spec percentage.</td></tr>
+</table>
+
+<h3>6.7 Absence and delegation</h3>
+<table>
+<tr><th>ID</th><th>Requirement</th></tr>
+<tr><td class="id">FR-7.1</td><td>Mark a user absent or present, with an optional date range and a note.</td></tr>
+<tr><td class="id">FR-7.2</td><td>Create a delegation: role, recipient, start date, mandatory end date, reason.</td></tr>
+<tr><td class="id">FR-7.3</td><td>List delegations currently in force and revoke one.</td></tr>
+<tr><td class="id">FR-7.4</td><td>The coverage picture — who is away, who is covering, which stages are uncovered — is visible on the dashboard for every role.</td></tr>
+</table>
+
+<h3>6.8 Notifications</h3>
+<table>
+<tr><th>ID</th><th>Requirement</th></tr>
+<tr><td class="id">FR-8.1</td><td>In-app notifications delivered live without a page refresh, with an unread badge in the header.</td></tr>
+<tr><td class="id">FR-8.2</td><td>Five notification types: an order is waiting for your approval; an order was rejected; an order was posted; an order is stalled (to administrators); a laboratory sample failed.</td></tr>
+<tr><td class="id">FR-8.3</td><td>Notifications are written in both languages at the moment they are raised, and displayed in the reader's chosen language.</td></tr>
+<tr><td class="id">FR-8.4</td><td>A notification links directly to the order or the sample it concerns.</td></tr>
+<tr><td class="id">FR-8.5</td><td>Mark one or all notifications as read; delete a notification.</td></tr>
+<tr><td class="id">FR-8.6</td><td>When the fan-out for a stage finds <b>no recipient at all</b>, administrators are notified instead. Silence is the worst possible outcome.</td></tr>
+</table>
+
+<h3>6.9 Dashboard</h3>
+<p>The dashboard is <b>composed per role</b> — nine roles doing nine different jobs do not share one screen.</p>
+<table>
+<tr><th>Block</th><th>Shows</th></tr>
+<tr><td><b>Waiting on you</b></td><td>The orders this person must act on now, oldest first, with an ageing clock</td></tr>
+<tr><td><b>My orders</b></td><td>Orders this person created and their current position</td></tr>
+<tr><td><b>The whole chain</b></td><td>Count and tonnage at each of the eight stages</td></tr>
+<tr><td><b>Stuck</b></td><td>Orders held more than 48 hours, as an alert strip</td></tr>
+<tr><td><b>This month</b></td><td>Orders and tonnage raised and posted this month</td></tr>
+<tr><td><b>Lab queue</b></td><td>Orders waiting for laboratory results</td></tr>
+<tr><td><b>Quality</b></td><td>In-spec percentage and recent failures</td></tr>
+<tr><td><b>Ready to weigh</b></td><td>Orders that have cleared sign-off</td></tr>
+<tr><td><b>Coverage</b></td><td>Delegations and absences in force today</td></tr>
+<tr><td><b>Volume trend</b></td><td>Tonnage by month over 12 months, with the rejection rate overlaid</td></tr>
+<tr><td><b>Quality trend</b></td><td>In-spec percentage by month over 12 months</td></tr>
+<tr><td><b>Product mix</b></td><td>Share of tonnage by product over 12 months</td></tr>
+</table>
+<h4>Assignment by role</h4>
+<table>
+<tr><th>Role</th><th>Blocks</th></tr>
+<tr><td>Sales Coordinator</td><td>My orders · Waiting on you · Coverage</td></tr>
+<tr><td>Sales Manager</td><td>Waiting on you · This month · My orders · Coverage</td></tr>
+<tr><td>Finance Manager</td><td>Waiting on you · This month · Coverage</td></tr>
+<tr><td>Accounts Officer</td><td>Waiting on you · Coverage</td></tr>
+<tr><td>General Manager</td><td>Stuck · The whole chain · Waiting on you · This month · Quality · Volume trend · Quality trend · Product mix · Coverage</td></tr>
+<tr><td>Technical Manager</td><td>Waiting on you · Lab queue · Quality · Quality trend · Coverage</td></tr>
+<tr><td>Lab Technician</td><td>Lab queue · Quality · Coverage</td></tr>
+<tr><td>Weighbridge</td><td>Ready to weigh · Coverage</td></tr>
+<tr><td>Administrator</td><td>Stuck · The whole chain · This month · Volume trend · Quality trend · Product mix · Coverage</td></tr>
+</table>
+
+<h3>6.10 Working queues</h3>
+<p>Three dedicated screens beyond the dashboard, open to every signed-in user and showing only what is theirs to act on. Each carries a live count badge in the navigation.</p>
+<ul>
+<li><b>Approvals</b> (<span class="ar">الاعتمادات</span>) — orders awaiting this person's approval</li>
+<li><b>Results Sign-off</b> (<span class="ar">اعتماد النتائج</span>) — orders at stage 7 awaiting this person's signature</li>
+<li><b>Rejections</b> (<span class="ar">المرفوضة</span>) — rejected orders visible to this person, with reasons</li>
+</ul>
+
+<h3>6.11 Administration</h3>
+<table>
+<tr><th>ID</th><th>Requirement</th></tr>
+<tr><td class="id">FR-11.1</td><td>Create, edit and deactivate users; set name (both languages), email, password, role and module permissions.</td></tr>
+<tr><td class="id">FR-11.2</td><td>The role selector carries a visible warning that changing a role changes signing authority.</td></tr>
+<tr><td class="id">FR-11.3</td><td><b>Audit Trail</b> — a searchable record of every change, filterable by entity type, entity, person, action and date. Each entry records what changed, from what to what, by whom, and when.</td></tr>
+<tr><td class="id">FR-11.4</td><td><b>System Health</b> — database connectivity, order and sample counts, orders held over 48 hours, and, most importantly, which chain roles currently have nobody active behind them.</td></tr>
+</table>
+
+<h2>7. Reporting</h2>
+<p>Eight standing management views, plus Excel export. Every one respects the same visibility rules as the screens — a report is simply another way of reading what the user is already entitled to see.</p>
+<table>
+<tr><th>ID</th><th>View</th><th>Question it answers</th><th>Where it lives</th></tr>
+<tr><td class="id">R1</td><td><b>Pipeline and ageing</b></td><td>Where is everything, and what is stuck?</td><td>Dashboard — eight stat tiles: count, tonnage, oldest item, average wait</td></tr>
+<tr><td class="id">R2</td><td><b>Cycle time and bottleneck</b></td><td>Which desk is slow, and which person?</td><td>Reports — average, 90th-percentile and maximum hours per stage, with a per-person breakdown</td></tr>
+<tr><td class="id">R3</td><td><b>Rejection analysis</b></td><td>Why do orders die, and where?</td><td>Reports — count and tonnage lost per stage, the reasons, the rejectors, and a rejection rate per stage</td></tr>
+<tr><td class="id">R4</td><td><b>Weight variance</b></td><td>How accurate are our deliveries?</td><td>Reports — variance by customer and by product, plus outliers beyond ±1%</td></tr>
+<tr><td class="id">R5</td><td><b>Per-customer volume and quality</b></td><td>Which customers matter, and are we serving them well?</td><td>Reports and the customer profile — orders, tonnage, cycle time, rejection rate, quality history</td></tr>
+<tr><td class="id">R6</td><td><b>Laboratory pass rate</b></td><td>What proportion of production meets specification?</td><td>Lab → Quality KPIs — in-spec / warning / out-of-range split, overall and per customer and product</td></tr>
+<tr><td class="id">R7</td><td><b>Delegation and absence coverage</b></td><td>How much of the chain is being signed by stand-ins?</td><td>Reports — signatures grouped by capacity (primary / delegate / deputy), per stage and per person</td></tr>
+<tr><td class="id">R8</td><td><b>My queue</b></td><td>What must I deal with first?</td><td>Approvals and Sign-off queues — not a chart; the working list, oldest first, with a red badge</td></tr>
+</table>
+<div class="note"><p><b>Why R2 matters commercially</b></p><p>The system records not only when a person signed, but when the order <i>arrived</i> at their desk. Without that distinction a slow approver at stage 5 looks identical to a slow one at stage 2. This is the measurement that turns "orders take too long" into a named, actionable finding.</p></div>
+
+<h3>7.1 Quality KPIs</h3>
+<p>Separately from the order reports, the laboratory screen gives per-product-per-parameter KPIs: number of readings, average, standard deviation, <b>coefficient of variation (CV%)</b>, minimum and maximum recorded, in-spec percentage, and a combined rating.</p>
+<table>
+<tr><th>Rating</th><th>In-spec</th><th>CV%</th><th>Reading</th></tr>
+<tr><td class="pass">Excellent</td><td class="num">≥ 95%</td><td class="num">&lt; 5</td><td>Consistent and on target</td></tr>
+<tr><td class="warncol">Good</td><td class="num">≥ 85%</td><td class="num">≤ 10</td><td>Acceptable, worth watching</td></tr>
+<tr><td class="fail">Needs attention</td><td class="num">&lt; 85%</td><td class="num">&gt; 10</td><td>Either off target or erratic</td></tr>
+</table>
+<p>These thresholds are taken from the QA department's existing workbook colour legend, so the figures are directly comparable to what QA already reports.</p>
+
+<h3>7.2 Excel export</h3>
+<p>Four workbooks — Orders, Pipeline, Cycle time, and Laboratory — in either language, with status colour-coding. The export applies the same visibility rules as the screens: it does not hand over in one file what the approval chain spends eight stages protecting.</p>
+
+<h2>8. Information Model (business view)</h2>
+<table>
+<tr><th>Entity</th><th>What it represents</th><th>Key facts held</th></tr>
+<tr><td><b>Sales Order</b></td><td>One customer order through the chain</td><td>Order number, departmental reference, customer, dates, lines, totals, status, current stage, the eight signature slots, rejection record, linked samples, weighing record</td></tr>
+<tr><td><b>Order Line</b></td><td>One product on an order</td><td>Product, bag size, bag count, calculated weight, note</td></tr>
+<tr><td><b>Signature Slot</b></td><td>One actionable point in the chain</td><td>Stage, owning role, status, when it became actionable, who acted, when, in what capacity, on behalf of which role, note</td></tr>
+<tr><td><b>Laboratory Sample</b></td><td>One set of test readings</td><td>Sample number, optional order, product, customer, date, shift, batch, tester, readings, overall verdict, attachments, human decision</td></tr>
+<tr><td><b>Reading</b></td><td>One measured parameter</td><td>Parameter, unit, value, comparison type, the limits <b>as frozen at test time</b>, target, deviation from target, verdict</td></tr>
+<tr><td><b>Product</b></td><td>A flour grade</td><td>Name in both languages, active flag</td></tr>
+<tr><td><b>Parameter</b></td><td>A measurable quality characteristic</td><td>Name in both languages, unit, comparison type, default limits and target, display order</td></tr>
+<tr><td><b>Specification Override</b></td><td>A product-specific limit</td><td>Product, parameter, minimum, maximum, target</td></tr>
+<tr><td><b>Customer</b></td><td>A buyer</td><td>Name in both languages, code, contact details, active flag</td></tr>
+<tr><td><b>User</b></td><td>A person with access</td><td>Name in both languages, email, role, module permissions, active flag, absence state</td></tr>
+<tr><td><b>Delegation</b></td><td>A temporary transfer of signing authority</td><td>Role, from, to, period, reason</td></tr>
+<tr><td><b>Audit Entry</b></td><td>One recorded change</td><td>Entity, label, action, field, old value, new value, person, timestamp</td></tr>
+<tr><td><b>Notification</b></td><td>One alert to one person</td><td>Type, title and message in both languages, link, read state</td></tr>
+</table>
+<div class="note"><p><b>A convention worth knowing</b></p><p>Names of customers and products are <b>copied onto the order and the sample at the moment of writing</b>. If a customer is later renamed, historical documents keep the name that was actually used at the time — the same principle as freezing the specification onto a test result (BR-23).</p></div>
+
+<h2>9. Non-Functional Requirements</h2>
+
+<h3>9.1 Language and localisation</h3>
+<table>
+<tr><th>ID</th><th>Requirement</th></tr>
+<tr><td class="id">NFR-1.1</td><td>Every screen, label, message, notification and export is available in <b>Arabic and English</b>.</td></tr>
+<tr><td class="id">NFR-1.2</td><td>Arabic is <b>Modern Standard Arabic</b>, not colloquial.</td></tr>
+<tr><td class="id">NFR-1.3</td><td>The entire interface mirrors right-to-left in Arabic — tables, forms, navigation and <b>charts</b>. A client decision.</td></tr>
+<tr><td class="id">NFR-1.4</td><td>Language is switched from the header and applies immediately, without signing out.</td></tr>
+</table>
+
+<h3>9.2 Usability</h3>
+<table>
+<tr><th>ID</th><th>Requirement</th></tr>
+<tr><td class="id">NFR-2.1</td><td>A user is shown only the actions they may actually take. Controls the user cannot use are not shown disabled — they are absent.</td></tr>
+<tr><td class="id">NFR-2.2</td><td>Colour is never the only carrier of meaning. Every status colour ships with a label or an icon, for colour-blind users and for printing.</td></tr>
+<tr><td class="id">NFR-2.3</td><td>Waiting time is shown as an ageing clock that updates without reloading.</td></tr>
+<tr><td class="id">NFR-2.4</td><td>Refusals explain themselves in business language — "This order is closed" — not in technical terms.</td></tr>
+<tr><td class="id">NFR-2.5</td><td>The interface is usable on a tablet as well as a desktop.</td></tr>
+</table>
+
+<h3>9.3 Security</h3>
+<table>
+<tr><th>ID</th><th>Requirement</th></tr>
+<tr><td class="id">NFR-3.1</td><td>No screen and no data endpoint is reachable without signing in.</td></tr>
+<tr><td class="id">NFR-3.2</td><td>The visibility rule is enforced on the server for every read path — list, detail, report and export alike. Requesting an order the user may not see returns "not found", identical to a genuinely nonexistent one, so the system does not leak the existence of orders it then refuses to show.</td></tr>
+<tr><td class="id">NFR-3.3</td><td>Passwords are hashed; no password is recoverable, only resettable.</td></tr>
+<tr><td class="id">NFR-3.4</td><td>Uploaded files are served through a controlled path with a containment check, so no path can escape the upload directory.</td></tr>
+<tr><td class="id">NFR-3.5</td><td>A user cannot elevate their own role or permissions.</td></tr>
+<tr><td class="id">NFR-3.6</td><td>Every change to a role, a permission, an absence or a delegation is audited, because each one moves authority.</td></tr>
+</table>
+
+<h3>9.4 Integrity and availability</h3>
+<table>
+<tr><th>ID</th><th>Requirement</th></tr>
+<tr><td class="id">NFR-4.1</td><td>Simultaneous actions on the same order cannot corrupt it — see FR-3.1.</td></tr>
+<tr><td class="id">NFR-4.2</td><td>Order and sample numbers are unique under concurrent creation.</td></tr>
+<tr><td class="id">NFR-4.3</td><td>The system runs entirely on the plant's own server and needs no internet connectivity for any function.</td></tr>
+<tr><td class="id">NFR-4.4</td><td>Nightly automated database backup, with a documented and rehearsed restore procedure.</td></tr>
+<tr><td class="id">NFR-4.5</td><td>Uploaded files are held outside the application directory so a redeployment cannot delete them, and they are included in the backup.</td></tr>
+<tr><td class="id">NFR-4.6</td><td>The application restarts automatically after a server reboot.</td></tr>
+</table>
+
+<h3>9.5 Auditability</h3>
+<table>
+<tr><th>ID</th><th>Requirement</th></tr>
+<tr><td class="id">NFR-5.1</td><td>Nothing in the approval chain can be edited or back-dated after the fact.</td></tr>
+<tr><td class="id">NFR-5.2</td><td>The audit record is append-only and retained indefinitely.</td></tr>
+<tr><td class="id">NFR-5.3</td><td>Archiving rather than deletion is the rule for customers, orders, products, parameters and users. No business record is ever destroyed.</td></tr>
+</table>
+
+<h3>9.6 Performance</h3>
+<table>
+<tr><th>ID</th><th>Requirement</th></tr>
+<tr><td class="id">NFR-6.1</td><td>List screens page their results; totals reflect what the user may actually see.</td></tr>
+<tr><td class="id">NFR-6.2</td><td>The daily working screens respond within about two seconds on the plant network.</td></tr>
+<tr><td class="id">NFR-6.3</td><td>Reports are read weekly by a few managers, not continuously by everyone — they are permitted to be slower than the working screens.</td></tr>
+</table>
+
+<h2>10. Assumptions</h2>
+<table>
+<tr><th>ID</th><th>Assumption</th></tr>
+<tr><td class="id">A1</td><td>The plant has a server that is on whenever the mill is working, and all users reach it over the local network.</td></tr>
+<tr><td class="id">A2</td><td>There is no reachable outbound mail server, so notification is in-app only.</td></tr>
+<tr><td class="id">A3</td><td>Every person in the chain has their own account. Shared logins would destroy the value of the audit trail.</td></tr>
+<tr><td class="id">A4</td><td>Each of the eight stages is staffed by at least one active user. Where it is not, the system flags it — but it cannot invent an approver.</td></tr>
+<tr><td class="id">A5</td><td>The laboratory has the instruments to measure the eleven parameters listed, and the QA specification limits are agreed and stable.</td></tr>
+<tr><td class="id">A6</td><td>Bag sizes are limited to the five listed. A new bag size is a change request.</td></tr>
+<tr><td class="id">A7</td><td>The mill sells in bags. Bulk sales, if they exist, are not represented.</td></tr>
+<tr><td class="id">A8</td><td>The initial customer list — 19 names transcribed from a handwritten sheet — will be entered and verified by Sales through the Customers screen rather than loaded blind.</td></tr>
+</table>
+
+<h2>11. Constraints</h2>
+<table>
+<tr><th>ID</th><th>Constraint</th></tr>
+<tr><td class="id">C1</td><td>The system is deployed alongside the existing maintenance CMMS on the same host. The two are separate applications with separate databases, separate logins and separate notification streams.</td></tr>
+<tr><td class="id">C2</td><td>Users who need both systems hold two accounts and two passwords. An accepted cost of keeping the two systems independent.</td></tr>
+<tr><td class="id">C3</td><td>The system operates offline-first. Any future feature requiring external connectivity — email, SMS, cloud backup — is a change of assumption, not just a feature.</td></tr>
+<tr><td class="id">C4</td><td>The laboratory module moves out of the CMMS into this system and is removed from the CMMS. It cannot run in both.</td></tr>
+</table>
+
+<h2>12. Out of Scope — Named Explicitly</h2>
+<p>Things a mill will reasonably ask for and which this release does not include. They are excluded on purpose, not forgotten.</p>
+<ol>
+<li><b>A printable order sheet.</b> A controlled approval document usually ends up in a physical file, and "print the order with its signature chain" is the obvious next request. If it is added, the printed sheet must show the same "on behalf of" wording as the on-screen ladder, and must carry both the system order number and the departmental reference — otherwise the paper record will not reconcile with the ledger it came from.</li>
+<li><b>Email and SMS notification.</b> The plant runs offline; this release ships in-app notification only. Email would require a reachable mail server, which this deployment does not have.</li>
+<li><b>The laboratory instrument register</b> — instruments, calibration dates and calibration certificates.</li>
+<li><b>Invoicing, pricing and credit control.</b> LabGate authorises a release; it does not price it or collect for it.</li>
+<li><b>Inventory and production planning.</b></li>
+<li><b>Truck, driver, gross and tare weights.</b></li>
+</ol>
+
+<h2>13. Open Business Decisions</h2>
+<p>These need an answer from the business. Each is a small change in the system, but each is a business call, not a technical one.</p>
+<table>
+<tr><th>ID</th><th>Decision required</th><th>Where it stands</th><th>Why it matters</th></tr>
+<tr><td class="id">D1</td><td><b>Who covers the Technical Manager (stage 5), the joint sign-off (stage 7) and the weighbridge (stage 8) when they are away?</b></td><td>No automatic deputy — the order stalls visibly and administrators are notified</td><td><b>This is the one that will bite first.</b> An absent Technical Manager stops every order in the plant, at two separate stages.</td></tr>
+<tr><td class="id">D2</td><td><b>May one person hold two consecutive stages?</b></td><td>Permitted, and marked plainly on the approval ladder</td><td>Forbidding it would freeze the chain exactly when staffing is thin; permitting it weakens separation of duties. It should be a decision, not a side effect.</td></tr>
+<tr><td class="id">D3</td><td><b>Should Sales Coordinators see each other's orders, or only their own?</b></td><td>Own orders only (BR-03)</td><td>As it stands, two coordinators cannot cover for each other during leave or illness.</td></tr>
+<tr><td class="id">D4</td><td><b>Is 48 hours the right escalation line?</b></td><td>48 hours red, 24 hours amber (BR-39, BR-40)</td><td>It drives the ageing colours, the "stuck" alert strip and the SLA queue ordering.</td></tr>
+<tr><td class="id">D5</td><td><b>Confirmation of the 19 customer names</b>, eleven of which were transcribed from difficult handwriting</td><td>The Customers screen provides full add / edit / archive / restore, so names can be corrected in the system rather than guessed up front</td><td>A misspelled customer name propagates into every order, every sample and every report, and splits that customer's tonnage across two records.</td></tr>
+</table>
+
+<h2>14. Risks</h2>
+<table>
+<tr><th>ID</th><th>Risk</th><th>Impact</th><th>Mitigation</th></tr>
+<tr><td class="id">R1</td><td>A stage is left unstaffed — nobody active holds the role</td><td>Orders park at that stage silently and indefinitely</td><td>Detected automatically; administrators notified by name of the missing role; permanently visible on System Health</td></tr>
+<tr><td class="id">R2</td><td>Duplicate accounts between LabGate and the CMMS</td><td>User confusion, forgotten passwords</td><td>Stated openly to the business rather than discovered; both logins documented</td></tr>
+<tr><td class="id">R3</td><td>Two independent notification streams, one per system</td><td>A user in both systems sees two bells</td><td>Accepted and documented</td></tr>
+<tr><td class="id">R4</td><td>Roles carry real authority from day one — a careless role change grants or revokes signing power</td><td>Unauthorised approvals</td><td>Warning on the role selector; every role change audited</td></tr>
+<tr><td class="id">R5</td><td>Terminal rejection means a mis-click cannot be undone</td><td>A legitimate order must be re-entered</td><td>Rejection requires a written reason and a confirmation step; the rejected order and its reason stay visible</td></tr>
+<tr><td class="id">R6</td><td>Specification changes could retroactively invalidate historic verdicts</td><td>Quality history becomes unreadable</td><td>Limits are frozen onto each reading at test time (BR-23)</td></tr>
+<tr><td class="id">R7</td><td>Customer name duplication splits reporting</td><td>Tonnage and quality reports understate a customer</td><td>Enforced de-duplication (BR-31) and restricted creation (BR-32)</td></tr>
+<tr><td class="id">R8</td><td>Uploaded files live on disk, not in the database</td><td>A server move could lose them</td><td>Held outside the application directory, included in the backup, move procedure documented</td></tr>
+</table>
+
+<h2>15. Acceptance Criteria</h2>
+<p>The system is accepted when the business can demonstrate each of the following, on the live system.</p>
+<ol>
+<li>An order raised by a coordinator is <b>invisible</b> to Finance until Sales has approved it, and <b>visible</b> to the General Manager from the moment it is created.</li>
+<li>An order <b>cannot be edited</b> once the Sales Manager has approved it, by anyone other than an administrator, and not at all after stage 2.</li>
+<li>A rejection at any stage <b>closes the order permanently</b>, records the reason and the rejector, and appears in the Rejections report.</li>
+<li>A reading entered outside its limit is judged <b>out of range automatically</b>, and a reading near the limit is judged a <b>warning</b>, with no technician input.</li>
+<li>A specification changed <i>after</i> a test was recorded <b>does not alter that test's verdict</b>.</li>
+<li>Stage 7 does <b>not</b> advance on one signature and <b>does</b> advance on the second — including when both are given within the same second.</li>
+<li>The weighbridge entry produces a variance in kilograms and per cent, and posts the order, in one action.</li>
+<li>Marking the Finance Manager absent allows the Accounts Officer to approve stage 3, and the signature reads "on behalf of Finance Manager".</li>
+<li>Deactivating every Finance Manager produces a stall notification to administrators and an unstaffed-role warning on System Health.</li>
+<li>The entire interface, including charts, mirrors correctly in Arabic.</li>
+<li>An Excel export of orders contains only the orders the exporting user is entitled to see.</li>
+<li>The audit trail shows, for one chosen order, every action from creation to posting with names and timestamps.</li>
+</ol>
+
+<h2>16. Glossary</h2>
+<table>
+<tr><th>Term</th><th>Arabic</th><th>Meaning</th></tr>
+<tr><td>Approval chain</td><td class="ar">سلسلة الموافقات</td><td>The fixed eight-stage sequence every order must complete</td></tr>
+<tr><td>Stage</td><td class="ar">مرحلة</td><td>One step of the chain, owned by one role</td></tr>
+<tr><td>Posted</td><td class="ar">مرحّلة</td><td>The order has completed stage 8 and is released</td></tr>
+<tr><td>Rejected</td><td class="ar">مرفوضة</td><td>Terminated by an approver; permanently closed</td></tr>
+<tr><td>Deputy</td><td class="ar">النائب</td><td>A role written into the chain that may act only while the owning role is absent</td></tr>
+<tr><td>Delegate</td><td class="ar">المفوَّض</td><td>A named person given one role's authority for a fixed period, by deliberate hand-over</td></tr>
+<tr><td>On behalf of</td><td class="ar">بالنيابة عن</td><td>The wording on any signature made by a deputy or a delegate</td></tr>
+<tr><td>Sample</td><td class="ar">عيّنة</td><td>One set of laboratory readings on one batch of one product</td></tr>
+<tr><td>Parameter</td><td class="ar">معيار</td><td>One measurable quality characteristic — moisture, protein, ash</td></tr>
+<tr><td>Specification</td><td class="ar">مواصفة</td><td>The limits a parameter must satisfy for a given product</td></tr>
+<tr><td>In spec</td><td class="ar">مطابق</td><td>The reading is comfortably within the accepted range</td></tr>
+<tr><td>Warning</td><td class="ar">تحذير</td><td>Inside the range, but within 15% of the range width of a limit</td></tr>
+<tr><td>Out of range</td><td class="ar">خارج النطاق</td><td>Outside the accepted limits</td></tr>
+<tr><td>Batch</td><td class="ar">الدفعة</td><td>The physical lot a sample was drawn from</td></tr>
+<tr><td>Shift</td><td class="ar">الوردية</td><td>Morning, afternoon or night production shift</td></tr>
+<tr><td>Variance</td><td class="ar">الفرق</td><td>Actual net weight minus ordered weight, in kg and as a percentage</td></tr>
+<tr><td>CV%</td><td class="ar">معامل الاختلاف</td><td>Coefficient of variation — a measure of process consistency; lower is better</td></tr>
+<tr><td>In-spec %</td><td class="ar">نسبة المطابقة</td><td>Proportion of readings that met specification</td></tr>
+<tr><td>Stuck</td><td class="ar">متوقفة</td><td>An order held at one desk for more than 48 hours</td></tr>
+<tr><td>Departmental reference</td><td class="ar">الرقم المرجعي</td><td>The sales department's own order number, recorded for reconciliation</td></tr>
+<tr><td>Audit trail</td><td class="ar">سجل التدقيق</td><td>The permanent, append-only record of every change</td></tr>
+</table>
+
+<p><i>End of document. LabGate — Requirements Specification v1.0 — Golden Wheat Mills Company — 15 September 2026.</i></p>
+
+</body>
+</html>

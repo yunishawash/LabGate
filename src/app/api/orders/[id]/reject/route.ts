@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongoose";
 import { requireModule } from "@/lib/requireSession";
-import { badRequest, notFound, oid, readJson, str, conflict } from "@/lib/apiHelpers";
+import { badRequest, badStrictStr, notFound, oid, readJson, strictStr, conflict } from "@/lib/apiHelpers";
 import { notifyRejected } from "@/lib/salesNotify";
 import {
   visibilityFilter, andFilters, canReject, stagesAt, type Actor, type OrderLike,
@@ -23,7 +23,9 @@ export async function POST(
   if (!oid(id)) return badRequest("Invalid id");
 
   const body = await readJson(req);
-  const reason = str(body?.reason, 1000);
+  const reasonCheck = strictStr(body?.reason, 2000, "Reason");
+  if (!reasonCheck.ok) return badStrictStr(reasonCheck);
+  const reason = reasonCheck.value;
   // A rejection without a stated reason is a dead end nobody can learn from —
   // and it is what the rejection-analysis report reads.
   if (!reason) return badRequest("A reason is required to reject an order");
