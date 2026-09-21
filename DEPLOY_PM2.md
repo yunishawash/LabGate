@@ -213,6 +213,28 @@ exactly that case, not a plan).
 
 ---
 
+## 6a. PDF export needs a real Chromium on the server
+
+`/api/orders/[id]/pdf` renders the order form to PDF via `playwright-core`,
+which drives whatever Chrome/Chromium is already on the machine — the package
+itself ships no browser (`src/lib/pdf/browser.ts`). One-time setup:
+
+```bash
+sudo apt-get update && sudo apt-get install -y chromium-browser
+# some Ubuntu versions install the binary as `chromium` instead — check with
+# `which chromium-browser || which chromium` and use whichever exists
+echo "CHROME_EXECUTABLE_PATH=/usr/bin/chromium-browser" >> /opt/LabGate/.env.local
+```
+
+`npm run build`'s `postbuild` step already copies `.env.local` (and now
+`node_modules/playwright-core`) into `.next/standalone` along with everything
+else — no extra step needed there once the env var is set and the build runs.
+
+- [ ] Chromium installed, `CHROME_EXECUTABLE_PATH` set in `.env.local`
+- [ ] One PDF export tried on the server itself, not just in dev
+
+---
+
 ## 7. Clearing demo/dev data before go-live
 
 If this database was seeded locally (`npm run seed`, `seed-lab`,
