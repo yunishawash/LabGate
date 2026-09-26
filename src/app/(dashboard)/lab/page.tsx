@@ -480,8 +480,8 @@ export default function LabPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {viewSample.results.map((r) => (
-                      <tr key={r.parameterId}>
+                    {viewSample.results.map((r, i) => (
+                      <tr key={`${r.parameterId}-${i}`}>
                         <td className="px-3 py-1.5">
                           <p className="font-medium">{r.parameterName}</p>
                           <p className="text-xs text-slate-400">{LAB_OPERATOR_LABELS[r.operator][lang]}</p>

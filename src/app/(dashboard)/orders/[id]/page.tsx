@@ -476,9 +476,9 @@ function LinesTable({
                 </div>
               </div>
               <div className="border border-slate-200 rounded-lg overflow-hidden divide-y divide-slate-100">
-                {viewingSample.results.map((r) => (
+                {viewingSample.results.map((r, i) => (
                   <div
-                    key={r.parameterId}
+                    key={`${r.parameterId}-${i}`}
                     className={
                       "flex items-center justify-between gap-3 px-3 py-2 text-sm " +
                       (r.status === "fail" ? "bg-red-50/40" : r.status === "warning" ? "bg-amber-50/40" : "")
