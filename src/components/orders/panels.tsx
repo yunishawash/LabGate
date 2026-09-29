@@ -60,8 +60,8 @@ const RULES = [
                      ar: ["ما الذي تراه", "تصلك الطلبية بعد أن يعتمدها من قبلك."] },
   { icon: Clock,     en: ["Current stage", "Where the order is now, and how long it has been there. Red past two days."],
                      ar: ["المرحلة الحالية", "أين الطلبية الآن، ومنذ متى. تتحوّل إلى الأحمر بعد يومين."] },
-  { icon: UserCheck, en: ["Waiting for", "Who must act next. Stage 7 needs both managers."],
-                     ar: ["منتظر من", "من عليه التصرّف. المرحلة ٧ تتطلّب توقيع المديرَين معاً."] },
+  { icon: UserCheck, en: ["Waiting for", "Who must act next. Stage 7 is the General Manager's signature alone — the Technical Manager can see the lab report but does not sign it."],
+                     ar: ["منتظر من", "من عليه التصرّف. المرحلة ٧ توقيع المدير العام وحده — يمكن للمدير التقني الاطّلاع على تقرير المختبر دون الحاجة لتوقيعه."] },
   { icon: XCircle,   en: ["Rejection is permanent", "A rejected order is closed. A new one must be raised."],
                      ar: ["الرفض نهائي", "الطلبية المرفوضة تُغلَق نهائياً. يجب إنشاء طلبية جديدة."] },
   { icon: Lock,      en: ["No editing after approval", "Once anyone approves, the quantities are frozen."],
@@ -123,7 +123,8 @@ export function HowToReadPanel() {
  * Kept here rather than on `StageDef`: `salesWorkflow.ts` is imported by API
  * routes, and hanging a lucide component off the stage table would pull the
  * icon library into the server bundle for a decision that is purely visual.
- * Keyed by index, because stage 7 is two stages sharing one box.
+ * Keyed by index rather than stage key — an index can be held by more than
+ * one stage sharing one box (none currently is).
  */
 const STAGE_ICON: Record<number, LucideIcon> = {
   1: FilePlus2,      // raised
@@ -132,7 +133,7 @@ const STAGE_ICON: Record<number, LucideIcon> = {
   4: ShieldCheck,    // general manager
   5: Cog,            // technical / production
   6: FlaskConical,   // the lab
-  7: Stamp,          // the two signatures
+  7: Stamp,          // GM sign-off on the lab results
   8: Scale,          // weighbridge
 };
 

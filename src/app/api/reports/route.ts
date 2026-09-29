@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongoose";
 import { requireSession } from "@/lib/requireSession";
-import { badRequest, dateRange, oneOf } from "@/lib/apiHelpers";
+import { badRequest, dateRange, oid, oneOf } from "@/lib/apiHelpers";
 import { visibilityFilter, andFilters, SALES_STAGES, type Actor } from "@/lib/salesWorkflow";
 import { liveDelegationRoles } from "@/lib/salesAuth";
 import SalesOrder from "@/models/SalesOrder";
 
-const REPORTS = ["cycleTime", "rejections", "variance", "customers", "coverage"] as const;
+const REPORTS = ["cycleTime", "rejections", "variance", "customers", "coverage", "weightTrend", "weightTrendOrders"] as const;
 export type ReportKey = (typeof REPORTS)[number];
 
 /**
@@ -178,8 +178,23 @@ export async function GET(req: NextRequest) {
       SalesOrder.aggregate([
         { $match: match },
         {
+          // Group by id ALONE. `customer`/`customerAr` are denormalized onto
+          // each order at creation time (SalesOrder.ts's own comment on why:
+          // a later rename must not rewrite an already-approved paper trail),
+          // so the same customer can carry two different spellings across
+          // orders — an empty `customerAr` on some orders and the real name
+          // on others is the common case, and it is NOT reliably the older
+          // orders that are missing it (a customer created via a path that
+          // skipped the Arabic name can still be recent). A compound `_id`
+          // of {id, name, nameAr} split that one customer into two rows
+          // sharing a `customerId` — a wrong total (split across rows
+          // instead of summed) and a React key collision downstream. `$max`
+          // reliably prefers any non-empty string over "" regardless of
+          // which order carries it, without needing to guess by recency.
           $group: {
-            _id: { id: "$customerId", name: "$customer", nameAr: "$customerAr" },
+            _id: "$customerId",
+            name: { $max: "$customer" },
+            nameAr: { $max: "$customerAr" },
             orders: { $sum: 1 },
             orderedKg: { $sum: "$totalWeightKg" },
             actualKg: { $sum: "$actualNetWeightKg" },
@@ -214,9 +229,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       report,
       byCustomer: byCustomer.map((c) => ({
-        customerId: String(c._id.id ?? ""),
-        name: c._id.name as string,
-        nameAr: (c._id.nameAr as string) ?? "",
+        customerId: String(c._id ?? ""),
+        name: c.name as string,
+        nameAr: (c.nameAr as string) ?? "",
         orders: c.orders as number,
         orderedKg: c.orderedKg as number,
         actualKg: c.actualKg as number,
@@ -232,8 +247,12 @@ export async function GET(req: NextRequest) {
     const rows = await SalesOrder.aggregate([
       { $match: andFilters(visible, dated("createdAt")) },
       {
+        // See the identical fix (and its comment) on the variance report's
+        // `byCustomer` grouping above — same denormalized-name-drift bug.
         $group: {
-          _id: { id: "$customerId", name: "$customer", nameAr: "$customerAr" },
+          _id: "$customerId",
+          name: { $max: "$customer" },
+          nameAr: { $max: "$customerAr" },
           orders: { $sum: 1 },
           orderedKg: { $sum: "$totalWeightKg" },
           posted: { $sum: { $cond: [{ $eq: ["$status", "Posted"] }, 1, 0] } },
@@ -263,9 +282,9 @@ export async function GET(req: NextRequest) {
       rows: rows.map((r) => {
         const hours = (r.cycleHours as number[]).filter((h) => Number.isFinite(h));
         return {
-          customerId: String(r._id.id ?? ""),
-          name: r._id.name as string,
-          nameAr: (r._id.nameAr as string) ?? "",
+          customerId: String(r._id ?? ""),
+          name: r.name as string,
+          nameAr: (r.nameAr as string) ?? "",
           orders: r.orders as number,
           orderedKg: r.orderedKg as number,
           posted: r.posted as number,
@@ -324,6 +343,111 @@ export async function GET(req: NextRequest) {
             : 0,
         })),
     });
+  }
+
+  // ── Ordered vs weighed, by month — one line entered, one line at the scale ─
+  if (report === "weightTrend") {
+    const customerId = searchParams.get("customerId") || "";
+    const productId = searchParams.get("productId") || "";
+
+    let customerFilter = null;
+    if (customerId) {
+      const cid = oid(customerId);
+      if (!cid) return badRequest("Invalid customer id");
+      customerFilter = { customerId: cid };
+    }
+
+    const match = andFilters(visible, { status: "Posted" }, dated("postedAt"), customerFilter);
+
+    let rows;
+    if (productId) {
+      const pid = oid(productId);
+      if (!pid) return badRequest("Invalid product id");
+      rows = await SalesOrder.aggregate([
+        { $match: match },
+        { $unwind: "$lines" },
+        { $match: { "lines.productId": pid } },
+        {
+          $group: {
+            _id: { y: { $year: "$postedAt" }, m: { $month: "$postedAt" } },
+            orderedKg: { $sum: "$lines.lineWeightKg" },
+            // Orders posted before per-line weighing existed have no
+            // per-line reading to sum — they show as 0 here, not missing;
+            // see the caption the UI renders alongside this filter.
+            actualKg: { $sum: { $ifNull: ["$lines.actualWeightKg", 0] } },
+          },
+        },
+        { $sort: { "_id.y": 1, "_id.m": 1 } },
+      ]);
+    } else {
+      rows = await SalesOrder.aggregate([
+        { $match: match },
+        {
+          $group: {
+            _id: { y: { $year: "$postedAt" }, m: { $month: "$postedAt" } },
+            orderedKg: { $sum: "$totalWeightKg" },
+            actualKg: { $sum: { $ifNull: ["$actualNetWeightKg", 0] } },
+          },
+        },
+        { $sort: { "_id.y": 1, "_id.m": 1 } },
+      ]);
+    }
+
+    return NextResponse.json({
+      report,
+      months: rows.map((r) => ({
+        year: r._id.y as number,
+        month: (r._id.m as number) - 1, // Mongo's $month is 1-based; JS Date months are 0-based
+        orderedKg: r.orderedKg as number,
+        actualKg: r.actualKg as number,
+      })),
+      filteredByProduct: !!productId,
+    });
+  }
+
+  // ── The orders behind one point of the chart above ───────────────────────
+  if (report === "weightTrendOrders") {
+    const year = Number(searchParams.get("year"));
+    const month = Number(searchParams.get("month")); // 0-based, matching `weightTrend`'s own months[].month
+    if (!Number.isInteger(year) || !Number.isInteger(month) || month < 0 || month > 11) {
+      return badRequest("A valid year and month (0-11) are required");
+    }
+
+    const customerId = searchParams.get("customerId") || "";
+    const productId = searchParams.get("productId") || "";
+    let customerFilter = null;
+    if (customerId) {
+      const cid = oid(customerId);
+      if (!cid) return badRequest("Invalid customer id");
+      customerFilter = { customerId: cid };
+    }
+    let productFilter = null;
+    if (productId) {
+      const pid = oid(productId);
+      if (!pid) return badRequest("Invalid product id");
+      productFilter = { "lines.productId": pid };
+    }
+
+    // The exact month the clicked point represents — same UTC-month bucket
+    // `$year`/`$month` grouped by above, expressed as a plain date range so
+    // this can be a `find`, not another aggregation.
+    const monthStart = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
+    const monthEnd = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999));
+
+    const match = andFilters(
+      visible,
+      { status: "Posted", postedAt: { $gte: monthStart, $lte: monthEnd } },
+      customerFilter,
+      productFilter
+    );
+
+    const orders = await SalesOrder.find(match)
+      .sort({ postedAt: -1 })
+      .limit(200)
+      .select("orderNumber customer customerAr totalWeightKg actualNetWeightKg varianceKg variancePct postedAt")
+      .lean();
+
+    return NextResponse.json({ report, orders });
   }
 
   return badRequest("Unknown report");

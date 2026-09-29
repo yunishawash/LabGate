@@ -260,9 +260,10 @@ async function main() {
         ? [{ item: 2, w: 6 }, { item: 3, w: 55 }, { item: 4, w: 6 }, { item: 5, w: 10 }, { item: 6, w: 4 }, { item: 7, w: 19 }]
         : [{ item: 2, w: 10 }, { item: 3, w: 32 }, { item: 4, w: 9 }, { item: 5, w: 14 }, { item: 6, w: 6 }, { item: 7, w: 29 }];
       rejectStage = pickWeighted(weights);
-      // Always the stage's own role — see the header note on why.
-      const role = rejectStage === 7 ? (rand() < 0.7 ? "general_manager" : "technical_manager")
-        : stagesByIndex.get(rejectStage)![0].role;
+      // Always the stage's own role — see the header note on why. Stage 7
+      // used to split between two roles here; it is single-signer now, same
+      // as every other stage, so no special case is left to make.
+      const role = stagesByIndex.get(rejectStage)![0].role;
       rejector = { role, user: usersByRole.get(role)! };
     }
 
@@ -386,9 +387,11 @@ async function main() {
       }
 
       if (idx === terminalStage && outcome === "open") {
-        // Still live. Stage 7's dual slots occasionally have one signature in.
+        // Still live. A dual-slot stage occasionally has one signature in and
+        // one still pending — no stage currently has two slots, so this is a
+        // no-op today, but stays generic rather than assuming stage 7 forever.
         for (const s of defs) {
-          const oneSigned = idx === 7 && defs.length === 2 && rand() < 0.4;
+          const oneSigned = defs.length === 2 && rand() < 0.4;
           const thisOneSigns = oneSigned && s === defs[0];
           if (thisOneSigns) {
             const actedBy = usersByRole.get(s.role)!;

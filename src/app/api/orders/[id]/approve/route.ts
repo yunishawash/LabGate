@@ -76,8 +76,9 @@ export async function POST(
     posted: result.posted,
     actedAs: result.actedAs,
     actedForRole: result.actedForRole,
-    // Stage 7 completes only when both signatures are in — say so plainly
-    // rather than letting the signer wonder why nothing moved.
+    // True only on a dual-slot stage where this signature wasn't the last one
+    // needed — say so plainly rather than letting the signer wonder why
+    // nothing moved. No stage is currently dual, so this is always false today.
     waitingForOther: result.advancedTo === null && !result.posted,
   });
 }

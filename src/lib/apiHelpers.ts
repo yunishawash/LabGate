@@ -146,7 +146,14 @@ export function dateRange(from: string | null, to: string | null) {
   if (to) {
     const d = new Date(to);
     if (!Number.isNaN(d.getTime())) {
-      d.setHours(23, 59, 59, 999);
+      // A date-only string ("2026-09-29") parses as UTC midnight (ECMA-262),
+      // so the end-of-day boundary must be set in UTC too — `setHours` reads
+      // the SERVER PROCESS's local timezone, which can silently roll the
+      // cutoff back a full calendar day (e.g. any server running on UTC,
+      // which is most hosts by default) or clip the tail of "today" (as it
+      // did here). `setUTCHours` keeps the boundary on the same calendar day
+      // the picker showed, regardless of where this code happens to run.
+      d.setUTCHours(23, 59, 59, 999);
       range.$lte = d;
     }
   }

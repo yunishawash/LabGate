@@ -7,11 +7,12 @@ import { liveDelegationRoles, isRoleUnavailable } from "@/lib/salesAuth";
 /**
  * Every stage transition, done atomically.
  *
- * NEVER read-modify-write. Two managers clicking approve on stage 7 within the
- * same second is not a hypothetical — it is the normal case for a joint gate.
- * Each transition is a CONDITIONAL update whose filter asserts the precondition
- * it depends on; a `null` result means someone got there first, which the
- * caller surfaces as a 409 rather than silently overwriting.
+ * NEVER read-modify-write. Two managers clicking approve on the same dual-slot
+ * stage within the same second is not a hypothetical — it is the normal case
+ * for a joint gate, on whichever stage currently has one. Each transition is a
+ * CONDITIONAL update whose filter asserts the precondition it depends on; a
+ * `null` result means someone got there first, which the caller surfaces as a
+ * 409 rather than silently overwriting.
  */
 
 export type TransitionError =
@@ -68,10 +69,10 @@ export async function resolveSlot(
  * Claim one slot, then advance the stage only if EVERY slot at that index is
  * now satisfied.
  *
- * The two-step shape is what makes the dual sign-off work without a lock: the
- * loser of a stage-7 race still claims its own slot successfully, and its
- * advance is a harmless no-op because the `currentStageIndex` precondition has
- * already moved.
+ * The two-step shape is what makes a dual sign-off work without a lock: the
+ * loser of the race for the second slot still claims its own slot
+ * successfully, and its advance is a harmless no-op because the
+ * `currentStageIndex` precondition has already moved.
  */
 export async function claimAndAdvance(
   orderId: string,

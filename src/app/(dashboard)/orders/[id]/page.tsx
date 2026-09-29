@@ -38,6 +38,7 @@ interface OrderDetail extends OrderRow {
   lines: {
     productId: string; product: string; productAr?: string;
     bagWeightKg: number; bagCount: number; lineWeightKg: number; note?: string; bonusBags?: number;
+    actualWeightKg?: number | null;
   }[];
   /** Samples attached to this order so far — one entry per sample, however
    *  many of the order's products they collectively cover. */
@@ -360,6 +361,12 @@ function LinesTable({
             <th className="text-end font-medium py-2 px-3 whitespace-nowrap">{t("Bag", "الكيس")}</th>
             <th className="text-end font-medium py-2 px-3 whitespace-nowrap">{t("Bags", "الأكياس")}</th>
             <th className="text-end font-medium py-2 whitespace-nowrap">{t("Weight", "الوزن")}</th>
+            {order.status === "Posted" && (
+              <>
+                <th className="text-end font-medium py-2 ps-3 whitespace-nowrap">{t("Weighed", "الوزن الفعلي")}</th>
+                <th className="text-end font-medium py-2 ps-3 whitespace-nowrap">{t("Difference", "الفرق")}</th>
+              </>
+            )}
             {showLab && (
               <>
                 <th className="text-end font-medium py-2 ps-3 whitespace-nowrap">{t("Lab", "المختبر")}</th>
@@ -382,6 +389,34 @@ function LinesTable({
                 <td className="py-2 text-end tabular-nums text-slate-800 whitespace-nowrap">
                   {(l.lineWeightKg / 1000).toFixed(3)} {t("t", "طن")}
                 </td>
+                {order.status === "Posted" && (
+                  <>
+                    <td className="py-2 ps-3 text-end tabular-nums whitespace-nowrap">
+                      {l.actualWeightKg != null ? (
+                        <span className={Math.abs(l.actualWeightKg - l.lineWeightKg) / l.lineWeightKg > 0.005 ? "text-amber-700 font-medium" : "text-slate-800"}>
+                          {(l.actualWeightKg / 1000).toFixed(3)} {t("t", "طن")}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-300">—</span>
+                      )}
+                    </td>
+                    <td className="py-2 ps-3 text-end tabular-nums whitespace-nowrap">
+                      {l.actualWeightKg != null ? (() => {
+                        const diffKg = l.actualWeightKg - l.lineWeightKg;
+                        const diffPct = l.lineWeightKg ? Math.round((diffKg / l.lineWeightKg) * 10000) / 100 : 0;
+                        const wide = Math.abs(diffPct) > 0.5;
+                        return (
+                          <span className={wide ? "text-amber-700 font-medium" : "text-slate-500"}>
+                            {diffKg > 0 ? "+" : ""}{diffKg.toFixed(0)} kg
+                            <span className="text-xs"> ({diffPct > 0 ? "+" : ""}{diffPct}%)</span>
+                          </span>
+                        );
+                      })() : (
+                        <span className="text-xs text-slate-300">—</span>
+                      )}
+                    </td>
+                  </>
+                )}
                 {showLab && (
                   <>
                     <td className="py-2 ps-3 text-end whitespace-nowrap">
@@ -433,6 +468,36 @@ function LinesTable({
             <td className="py-2 text-end tabular-nums whitespace-nowrap">
               {(order.totalWeightKg / 1000).toFixed(3)} {t("t", "طن")}
             </td>
+            {order.status === "Posted" && (() => {
+              // Orders posted before per-line weighing existed have an
+              // order-level total but no per-line reading at all — summing
+              // "no data" as 0 would print a false "-100%" instead of saying
+              // plainly that the breakdown isn't there.
+              const anyWeighed = order.lines.some((l) => l.actualWeightKg != null);
+              if (!anyWeighed) {
+                return (
+                  <>
+                    <td className="py-2 ps-3 text-end text-slate-300">—</td>
+                    <td className="py-2 ps-3 text-end text-slate-300">—</td>
+                  </>
+                );
+              }
+              const totalActualKg = order.lines.reduce((s, l) => s + (l.actualWeightKg ?? 0), 0);
+              const totalDiffKg = totalActualKg - order.totalWeightKg;
+              const totalDiffPct = order.totalWeightKg ? Math.round((totalDiffKg / order.totalWeightKg) * 10000) / 100 : 0;
+              const wide = Math.abs(totalDiffPct) > 0.5;
+              return (
+                <>
+                  <td className="py-2 ps-3 text-end tabular-nums whitespace-nowrap">
+                    {(totalActualKg / 1000).toFixed(3)} {t("t", "طن")}
+                  </td>
+                  <td className={`py-2 ps-3 text-end tabular-nums whitespace-nowrap ${wide ? "text-amber-700" : ""}`}>
+                    {totalDiffKg > 0 ? "+" : ""}{totalDiffKg.toFixed(0)} kg
+                    <span className="text-xs"> ({totalDiffPct > 0 ? "+" : ""}{totalDiffPct}%)</span>
+                  </td>
+                </>
+              );
+            })()}
             {showLab && (
               <>
                 <td />

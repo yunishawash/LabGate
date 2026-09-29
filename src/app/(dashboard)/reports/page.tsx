@@ -1,10 +1,15 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
-import { BarChart3, Download, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import {
+  ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+} from "recharts";
+import { BarChart3, Download } from "lucide-react";
 import { useLang } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { formatDate, toDateInputValue } from "@/lib/utils";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
+import { formatDate } from "@/lib/utils";
 import { SALES_STAGES } from "@/lib/salesWorkflow";
 
 /**
@@ -24,7 +29,7 @@ function useHours() {
   };
 }
 
-type ReportKey = "cycleTime" | "rejections" | "variance" | "customers" | "coverage";
+type ReportKey = "cycleTime" | "rejections" | "variance" | "customers" | "coverage" | "weightTrend";
 
 const TABS: { key: ReportKey; en: string; ar: string; question: [string, string] }[] = [
   { key: "cycleTime",  en: "Cycle time",  ar: "زمن الدورة",
@@ -33,6 +38,8 @@ const TABS: { key: ReportKey; en: string; ar: string; question: [string, string]
     question: ["Why do orders die, and where?", "لماذا تتوقّف الطلبيات، وأين؟"] },
   { key: "variance",   en: "Weight variance", ar: "فروقات الوزن",
     question: ["Are we shipping what we sold?", "هل نشحن ما بعناه فعلاً؟"] },
+  { key: "weightTrend", en: "Ordered vs weighed", ar: "المطلوب مقابل الموزون",
+    question: ["Ordered vs weighed, month by month", "المطلوب مقابل الموزون، شهرًا بشهر"] },
   { key: "customers",  en: "Customers",   ar: "الزبائن",
     question: ["Who are our real customers?", "من هم زبائننا الحقيقيون؟"] },
   { key: "coverage",   en: "Coverage",    ar: "التغطية",
@@ -53,11 +60,28 @@ export default function ReportsPage() {
   const [data, setData] = useState<Record<string, never> | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Only the "Ordered vs weighed" tab uses these — fetched once, on demand,
+  // the same lazy pattern the order dialog's own customer picker uses.
+  const [trendCustomerId, setTrendCustomerId] = useState("");
+  const [trendProductId, setTrendProductId] = useState("");
+  const [customers, setCustomers] = useState<{ _id: string; name: string; nameAr?: string }[]>([]);
+  const [products, setProducts] = useState<{ _id: string; name: string; nameAr?: string }[]>([]);
+
+  useEffect(() => {
+    if (tab !== "weightTrend" || customers.length || products.length) return;
+    fetch("/api/customers?limit=1000").then((r) => r.json()).then((d) => setCustomers(d.customers || [])).catch(() => {});
+    fetch("/api/lab/products").then((r) => r.json()).then((d) => setProducts(d.products || [])).catch(() => {});
+  }, [tab, customers.length, products.length]);
+
   const load = useCallback(async () => {
     setLoading(true);
     const p = new URLSearchParams({ report: tab });
     if (from) p.set("from", from);
     if (to) p.set("to", to);
+    if (tab === "weightTrend") {
+      if (trendCustomerId) p.set("customerId", trendCustomerId);
+      if (trendProductId) p.set("productId", trendProductId);
+    }
     try {
       const res = await fetch(`/api/reports?${p}`);
       setData(res.ok ? await res.json() : null);
@@ -65,7 +89,7 @@ export default function ReportsPage() {
       setData(null);
     }
     setLoading(false);
-  }, [tab, from, to]);
+  }, [tab, from, to, trendCustomerId, trendProductId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -125,13 +149,29 @@ export default function ReportsPage() {
           ))}
         </div>
         <div className="flex items-center gap-1.5 ms-auto">
-          <Input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className="h-9 w-40" />
-          <Input type="date" value={to} min={from || undefined} max={toDateInputValue(new Date())} onChange={(e) => setTo(e.target.value)} className="h-9 w-40" />
-          {(from || to) && (
-            <button onClick={() => { setFrom(""); setTo(""); }} className="h-9 px-2 rounded-lg text-sm text-slate-500 hover:bg-slate-100 cursor-pointer flex items-center gap-1">
-              <X size={14} />
-            </button>
+          {tab === "weightTrend" && (
+            <>
+              <Select value={trendCustomerId || "__all__"} onValueChange={(v) => setTrendCustomerId(v === "__all__" ? "" : v)}>
+                <SelectTrigger className="h-9 w-40 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">{t("All customers", "كل الزبائن")}</SelectItem>
+                  {customers.map((c) => (
+                    <SelectItem key={c._id} value={c._id}>{(lang === "ar" && c.nameAr) || c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={trendProductId || "__all__"} onValueChange={(v) => setTrendProductId(v === "__all__" ? "" : v)}>
+                <SelectTrigger className="h-9 w-40 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">{t("All products", "كل الأصناف")}</SelectItem>
+                  {products.map((p) => (
+                    <SelectItem key={p._id} value={p._id}>{(lang === "ar" && p.nameAr) || p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
           )}
+          <DateRangePicker from={from} to={to} onChange={(f, toVal) => { setFrom(f); setTo(toVal); }} />
         </div>
       </div>
 
@@ -144,6 +184,9 @@ export default function ReportsPage() {
         {!loading && data && tab === "cycleTime" && <CycleTime data={data} stageName={stageName} />}
         {!loading && data && tab === "rejections" && <RejectionReport data={data} stageName={stageName} />}
         {!loading && data && tab === "variance" && <VarianceReport data={data} />}
+        {!loading && data && tab === "weightTrend" && (
+          <WeightTrendReport data={data} customerId={trendCustomerId} productId={trendProductId} />
+        )}
         {!loading && data && tab === "customers" && <CustomerReport data={data} />}
         {!loading && data && tab === "coverage" && <CoverageReport data={data} stageName={stageName} />}
       </div>
@@ -188,15 +231,48 @@ function Empty({ children }: { children: React.ReactNode }) {
   return <p className="text-sm text-slate-400 py-3">{children}</p>;
 }
 
+export interface VarianceOrderRow {
+  _id: string; orderNumber: string; customer: string; customerAr?: string;
+  totalWeightKg: number; actualNetWeightKg: number; variancePct: number; postedAt: string;
+}
+
+/** The order list under a report — used both by the variance report's own
+ *  outliers and by the weight-trend chart's per-point drill-down, which
+ *  reuses this exact shape and columns rather than inventing a second one. */
+function OrdersTable({ title, orders }: { title: string; orders: VarianceOrderRow[] }) {
+  const { lang, t } = useLang();
+  if (!orders.length) return null;
+  return (
+    <>
+      <h3 className="text-sm font-medium text-slate-900 mt-5 mb-2">{title}</h3>
+      <Table headers={[t("Order", "الطلبية"), t("Ordered", "المطلوب"), t("Actual", "الفعلي"), t("Variance", "الفرق"), t("Posted", "الترحيل")]}>
+        {orders.slice(0, 15).map((o) => (
+          <tr key={o._id}>
+            <td className="py-2">
+              <Link href={`/orders/${o._id}`} className="font-mono text-xs text-sky-700 hover:underline">
+                <bdi>{o.orderNumber}</bdi>
+              </Link>
+              <span className="text-slate-600 ms-2">{(lang === "ar" && o.customerAr) || o.customer}</span>
+            </td>
+            <Num v={(o.totalWeightKg / 1000).toFixed(3)} />
+            <Num v={(o.actualNetWeightKg / 1000).toFixed(3)} />
+            <Num v={`${o.variancePct > 0 ? "+" : ""}${o.variancePct}%`} cls="text-amber-700 font-medium" />
+            <Num v={formatDate(o.postedAt)} cls="text-slate-400" />
+          </tr>
+        ))}
+      </Table>
+    </>
+  );
+}
+
 // ── cycle time ─────────────────────────────────────────────────────────────
 function CycleTime({ data }: { data: Record<string, never>; stageName: (i?: number | null) => string }) {
   const { lang, t } = useLang();
   const hours = useHours();
   /**
-   * Named by STEP here, not by stage: index 7 holds two signatures, and calling
-   * both rows "Lab results sign-off" made a correct table look duplicated. The
-   * timeline wants the group name — it shows one node — and this wants the
-   * individual one, because it is measuring the two signatures separately.
+   * Named by STEP here, not by stage: a dual-slot stage (an index held by more
+   * than one signature — none currently exists) would otherwise show two rows
+   * under the same group name, and this table measures each one separately.
    */
   const stepName = (key: string) => {
     const s = SALES_STAGES.find((x) => x.key === key);
@@ -306,10 +382,7 @@ function VarianceReport({ data }: { data: Record<string, never> }) {
     customerId: string; name: string; nameAr: string;
     orders: number; orderedKg: number; actualKg: number; avgPct: number | null;
   }[];
-  const outliers = (data.outliers ?? []) as unknown as {
-    _id: string; orderNumber: string; customer: string; customerAr?: string;
-    totalWeightKg: number; actualNetWeightKg: number; variancePct: number; postedAt: string;
-  }[];
+  const outliers = (data.outliers ?? []) as unknown as VarianceOrderRow[];
   const overall = data.overall as unknown as { orders: number; orderedKg: number; actualKg: number } | null;
   if (!rows.length) return <Empty>{t("No posted orders in this period.", "لا توجد طلبيات مُرحَّلة في هذه الفترة.")}</Empty>;
 
@@ -356,26 +429,152 @@ function VarianceReport({ data }: { data: Record<string, never> }) {
         ))}
       </Table>
 
-      {outliers.length > 0 && (
-        <>
-          <h3 className="text-sm font-medium text-slate-900 mt-5 mb-2">
-            {t("Beyond ±1% — look at the load, not the average", "أكبر من ±١٪ — راجع الحمولة نفسها لا المتوسّط")}
-          </h3>
-          <Table headers={[t("Order", "الطلبية"), t("Ordered", "المطلوب"), t("Actual", "الفعلي"), t("Variance", "الفرق"), t("Posted", "الترحيل")]}>
-            {outliers.slice(0, 15).map((o) => (
-              <tr key={o._id}>
-                <td className="py-2">
-                  <bdi className="font-mono text-xs text-sky-700">{o.orderNumber}</bdi>
-                  <span className="text-slate-600 ms-2">{(lang === "ar" && o.customerAr) || o.customer}</span>
-                </td>
-                <Num v={(o.totalWeightKg / 1000).toFixed(3)} />
-                <Num v={(o.actualNetWeightKg / 1000).toFixed(3)} />
-                <Num v={`${o.variancePct > 0 ? "+" : ""}${o.variancePct}%`} cls="text-amber-700 font-medium" />
-                <Num v={formatDate(o.postedAt)} cls="text-slate-400" />
-              </tr>
-            ))}
-          </Table>
-        </>
+      <OrdersTable
+        title={t("Beyond ±1% — look at the load, not the average", "أكبر من ±١٪ — راجع الحمولة نفسها لا المتوسّط")}
+        orders={outliers}
+      />
+    </>
+  );
+}
+
+// ── weight trend — ordered vs weighed, by month ─────────────────────────────
+const ORDERED_COLOR = "#2a78d6"; // same blue as the dashboard's "posted" ramp
+const WEIGHED_COLOR = "#b91c1c"; // same red the app already uses for a shortfall
+const TREND_AXIS_TICK = { fontSize: 11, fill: "#64748b" };
+const TREND_GRID = "#f1f5f9";
+
+function trendMonthLabel(year: number, month: number, lang: "en" | "ar"): string {
+  return new Date(year, month, 1).toLocaleDateString(lang === "ar" ? "ar" : "en", {
+    month: "short", year: "2-digit", numberingSystem: "latn",
+  });
+}
+
+/** Recharts always lays out left-to-right; reversing the data array is what
+ *  makes an Arabic reading of the same chart start at the most recent month —
+ *  the same trick `charts.tsx` uses for the dashboard's own trend charts. */
+function trendOrient<T>(data: T[], lang: "en" | "ar"): T[] {
+  return lang === "ar" ? [...data].reverse() : data;
+}
+
+interface TrendPoint {
+  label: string; year: number; month: number; ordered: number; weighed: number;
+}
+
+function WeightTrendReport({
+  data, customerId, productId,
+}: { data: Record<string, never>; customerId: string; productId: string }) {
+  const { lang, t } = useLang();
+  const months = (data.months ?? []) as unknown as {
+    year: number; month: number; orderedKg: number; actualKg: number;
+  }[];
+  const hasAny = months.some((m) => m.orderedKg > 0 || m.actualKg > 0);
+
+  const [selected, setSelected] = useState<{ year: number; month: number; label: string } | null>(null);
+  const [drillOrders, setDrillOrders] = useState<VarianceOrderRow[]>([]);
+  const [drillLoading, setDrillLoading] = useState(false);
+  // Recharts' click handler is only wired up once, on mount, against whatever
+  // closure was current then — a later re-render's fresh `chartData` array
+  // never reaches it. A ref sidesteps that: it's the same object identity
+  // for the handler's whole lifetime, mutated in place every render, so the
+  // handler always reads the current data through it.
+  const chartDataRef = useRef<TrendPoint[]>([]);
+
+  // A different tab/filter combination invalidates whatever point was
+  // selected under the old data — closing the drill-down rather than
+  // silently showing orders for a point that may no longer even be on screen.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { setSelected(null); }, [data, customerId, productId]);
+
+  useEffect(() => {
+    if (!selected) return;
+    setDrillLoading(true);
+    const p = new URLSearchParams({
+      report: "weightTrendOrders", year: String(selected.year), month: String(selected.month),
+    });
+    if (customerId) p.set("customerId", customerId);
+    if (productId) p.set("productId", productId);
+    fetch(`/api/reports?${p}`)
+      .then((r) => r.json())
+      .then((d) => setDrillOrders(d.orders ?? []))
+      .catch(() => setDrillOrders([]))
+      .finally(() => setDrillLoading(false));
+  }, [selected, customerId, productId]);
+
+  // Computed unconditionally (never after the early `return` below) so the
+  // ref-sync effect right after it keeps a stable hook count across renders.
+  const chartData: TrendPoint[] = trendOrient(
+    months.map((m) => ({
+      label: trendMonthLabel(m.year, m.month, lang), year: m.year, month: m.month,
+      ordered: Math.round((m.orderedKg / 1000) * 1000) / 1000,
+      weighed: Math.round((m.actualKg / 1000) * 1000) / 1000,
+    })),
+    lang
+  );
+  useEffect(() => { chartDataRef.current = chartData; });
+
+  if (!months.length || !hasAny) {
+    return <Empty>{t("No posted orders in this period.", "لا توجد طلبيات مُرحَّلة في هذه الفترة.")}</Empty>;
+  }
+
+  return (
+    <>
+      <div className="h-80" dir="ltr">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart
+            data={chartData}
+            margin={{ top: 4, right: 8, bottom: 0, left: 0 }}
+            onClick={(state) => {
+              const activeLabel = state?.activeLabel;
+              const point = chartDataRef.current.find((p) => p.label === activeLabel);
+              if (!point) return;
+              setSelected((cur) =>
+                cur && cur.year === point.year && cur.month === point.month
+                  ? null
+                  : { year: point.year, month: point.month, label: point.label }
+              );
+            }}
+          >
+            <CartesianGrid stroke={TREND_GRID} vertical={false} />
+            <XAxis dataKey="label" tick={TREND_AXIS_TICK} axisLine={{ stroke: "#e2e8f0" }} tickLine={false} />
+            <YAxis
+              tick={TREND_AXIS_TICK} axisLine={false} tickLine={false} width={40}
+              label={{ value: t("t", "طن"), position: "insideTopLeft", fontSize: 11, fill: "#94a3b8" }}
+            />
+            <Tooltip
+              formatter={(value, name) => [
+                `${value} ${t("t", "طن")}`,
+                name === "ordered" ? t("Ordered", "المطلوب") : t("Weighed", "الموزون"),
+              ]}
+              contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }}
+            />
+            <Legend
+              formatter={(value) => (value === "ordered" ? t("Ordered", "المطلوب") : t("Weighed", "الموزون"))}
+              wrapperStyle={{ fontSize: 12 }}
+            />
+            <Line
+              dataKey="ordered" name="ordered" type="monotone"
+              stroke={ORDERED_COLOR} strokeWidth={2} dot={{ r: 3, fill: ORDERED_COLOR }}
+            />
+            <Line
+              dataKey="weighed" name="weighed" type="monotone"
+              stroke={WEIGHED_COLOR} strokeWidth={2} dot={{ r: 3, fill: WEIGHED_COLOR }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      <p className="text-xs text-slate-400 mt-2">
+        {t(
+          "Posted orders only. Blue = the line entered at order time. Red = the same line's own weighbridge reading. Click a point to see its orders.",
+          "الطلبيات المرحّلة فقط. الأزرق = ما أُدخل في الطلبية. الأحمر = ما وُزن فعليًا لنفس البند. اضغط على نقطة لعرض طلبياتها."
+        )}
+      </p>
+
+      {selected && (
+        drillLoading ? (
+          <p className="text-sm text-slate-400 mt-5">{t("Loading…", "جارٍ التحميل…")}</p>
+        ) : (
+          <OrdersTable title={`${t("Orders", "الطلبيات")} — ${selected.label}`} orders={drillOrders} />
+        )
       )}
     </>
   );

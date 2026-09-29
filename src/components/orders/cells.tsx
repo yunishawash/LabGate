@@ -188,9 +188,9 @@ function Avatar({ name, away, isYou }: { name: string; away: boolean; isYou: boo
 
 /**
  * "Waiting for approval from" — avatar, person, role. Says **You** when the
- * viewer is the one holding it up, shows BOTH signatories at stage 7, and marks
- * a stage whose owner is away with no deputy, which is the one case that goes
- * nowhere on its own.
+ * viewer is the one holding it up, shows every live signatory when a stage has
+ * more than one (none currently does), and marks a stage whose owner is away
+ * with no deputy, which is the one case that goes nowhere on its own.
  */
 export function WaitingOnCell({ order, roleHolders }: { order: OrderRow; roleHolders: RoleHolders }) {
   const { lang, t } = useLang();

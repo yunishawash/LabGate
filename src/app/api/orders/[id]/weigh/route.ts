@@ -8,10 +8,26 @@ import { liveDelegationRoles } from "@/lib/salesAuth";
 import { resolveSlot, claimAndAdvance } from "@/lib/salesTransition";
 import SalesOrder from "@/models/SalesOrder";
 
+interface WeighLine {
+  productId: unknown;
+  product: string;
+  productAr: string;
+  bagWeightKg: number;
+  bagCount: number;
+  lineWeightKg: number;
+  note?: string;
+  bonusBags?: number;
+  actualWeightKg?: number | null;
+}
+
 /**
  * Net weight only — no truck, driver, gross or tare, by the client's decision.
- * The weight and the posting land in ONE write, so an order can never end up
- * weighed but unposted.
+ * But one number PER LINE, not one for the whole order: each product is its
+ * own scale reading, and a mixed truck cannot be reduced to a single figure
+ * without losing exactly the breakdown the weighbridge exists to record.
+ *
+ * The weights and the posting still land in ONE write, so an order can never
+ * end up weighed but unposted.
  */
 export async function POST(
   req: NextRequest,
@@ -26,16 +42,6 @@ export async function POST(
   if (!oid(id)) return badRequest("Invalid id");
 
   const body = await readJson(req);
-  const actualNetWeightKg = Number(body?.actualNetWeightKg);
-  if (!Number.isFinite(actualNetWeightKg) || actualNetWeightKg <= 0) {
-    return badRequest("A positive net weight is required");
-  }
-  // One textarea, but the value is written into two schema locations — the
-  // step's own note and the order-level `weighNote` — so it is validated
-  // once here and reused, not re-checked against two different caps.
-  const noteCheck = strictStr(body?.note, 2000, "Note");
-  if (!noteCheck.ok) return badStrictStr(noteCheck);
-
   const actor: Actor = { id: String(userDoc._id), role: userDoc.role };
   const delegated = await liveDelegationRoles(actor.id);
 
@@ -44,7 +50,30 @@ export async function POST(
   ).lean();
   if (!order) return notFound("Order not found");
 
-  const like = order as unknown as OrderLike & { createdById: unknown; totalWeightKg: number };
+  const like = order as unknown as OrderLike & {
+    createdById: unknown;
+    totalWeightKg: number;
+    lines: WeighLine[];
+  };
+
+  // One weight per existing line, in the SAME order `order.lines` is stored —
+  // lines carry no id of their own and editing is locked long before stage 8,
+  // so position is a stable, safe key here.
+  const inputLines = body?.lines;
+  if (!Array.isArray(inputLines) || inputLines.length !== like.lines.length) {
+    return badRequest("A weight for every line is required");
+  }
+  const weights = inputLines.map((v) => Number(v));
+  if (weights.some((w) => !Number.isFinite(w) || w <= 0)) {
+    return badRequest("Every line needs a positive net weight");
+  }
+
+  // One textarea, but the value is written into two schema locations — the
+  // step's own note and the order-level `weighNote` — so it is validated
+  // once here and reused, not re-checked against two different caps.
+  const noteCheck = strictStr(body?.note, 2000, "Note");
+  if (!noteCheck.ok) return badStrictStr(noteCheck);
+
   const shaped: OrderLike = {
     status: like.status,
     currentStageIndex: like.currentStageIndex,
@@ -57,6 +86,9 @@ export async function POST(
     if (slot.code === "terminal") return conflict("This order is closed.");
     return NextResponse.json({ error: "This order is not ready for weighing." }, { status: 403 });
   }
+
+  const weighedLines = like.lines.map((l, i) => ({ ...l, actualWeightKg: weights[i] }));
+  const actualNetWeightKg = Math.round(weights.reduce((s, w) => s + w, 0) * 1000) / 1000;
 
   const ordered = like.totalWeightKg || 0;
   const varianceKg = Math.round((actualNetWeightKg - ordered) * 1000) / 1000;
@@ -71,6 +103,7 @@ export async function POST(
       actedForRole: slot.actedForRole,
       note: noteCheck.value,
       extraSet: {
+        lines: weighedLines,
         actualNetWeightKg,
         varianceKg,
         variancePct,

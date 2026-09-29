@@ -9,42 +9,63 @@ import { Textarea } from "@/components/ui/textarea";
 import { useLang } from "@/components/layout/AppShell";
 import type { OrderRow } from "@/components/orders/cells";
 
+export interface WeighLine {
+  productId: string;
+  product?: string;
+  productAr?: string;
+  bagWeightKg?: number;
+  bagCount?: number;
+  lineWeightKg: number;
+}
+
 /**
- * Net weight only — no truck, driver, gross or tare. That was the client's
- * decision, and posting happens in the same action: the weighbridge operator
- * has one number to enter and one button to press.
+ * One net weight PER LINE — no truck, driver, gross or tare. That was the
+ * client's decision, and posting happens in the same action once every line
+ * has its own reading: the weighbridge operator has one number per product to
+ * enter and one button to press, because a mixed truck is never really one
+ * weight — it is one weight per product loaded onto it.
  *
  * The variance shown here is a preview computed the same way the server
- * computes the stored value; the server's number is the one that is kept.
+ * computes the stored value; the server's numbers are the ones that are kept.
  */
 export function WeighDialog({
   open, order, onClose, onDone,
-}: { open: boolean; order: OrderRow; onClose: () => void; onDone: () => void }) {
-  const { t } = useLang();
-  const [kg, setKg] = useState("");
+}: { open: boolean; order: OrderRow & { lines: WeighLine[] }; onClose: () => void; onDone: () => void }) {
+  const { lang, t } = useLang();
+  const [kgs, setKgs] = useState<string[]>([]);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => { if (open) { setKg(""); setNote(""); setError(""); } }, [open]);
+  useEffect(() => {
+    if (open) {
+      setKgs(order.lines.map(() => ""));
+      setNote("");
+      setError("");
+    }
+    // Only reset when the dialog opens — re-keying on `order.lines` would wipe
+    // whatever the operator already typed the moment the parent re-renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
-  const net = Number(kg);
-  const valid = Number.isFinite(net) && net > 0;
-  const varianceKg = valid ? net - order.totalWeightKg : 0;
-  const variancePct = valid && order.totalWeightKg
+  const nets = kgs.map((k) => Number(k));
+  const allValid = nets.length > 0 && nets.every((n) => Number.isFinite(n) && n > 0);
+  const net = allValid ? nets.reduce((s, n) => s + n, 0) : 0;
+  const varianceKg = allValid ? net - order.totalWeightKg : 0;
+  const variancePct = allValid && order.totalWeightKg
     ? Math.round((varianceKg / order.totalWeightKg) * 10000) / 100
     : 0;
   const wide = Math.abs(variancePct) > 0.5;
 
   const submit = async () => {
-    if (!valid) return;
+    if (!allValid) return;
     setBusy(true);
     setError("");
     try {
       const res = await fetch(`/api/orders/${order._id}/weigh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actualNetWeightKg: net, note }),
+        body: JSON.stringify({ lines: nets, note }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -75,25 +96,45 @@ export function WeighDialog({
 
         <div className="space-y-3">
           <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 flex items-center justify-between">
-            <span className="text-sm text-slate-500">{t("Ordered", "المطلوب")}</span>
+            <span className="text-sm text-slate-500">{t("Ordered (all lines)", "المطلوب (كل البنود)")}</span>
             <bdi className="tabular-nums font-medium text-slate-800">
               {(order.totalWeightKg / 1000).toFixed(3)} {t("t", "طن")}
               <span className="text-slate-400 font-normal"> ({order.totalWeightKg} kg)</span>
             </bdi>
           </div>
 
-          <div className="space-y-1.5">
-            <Label>{t("Actual net weight (kg)", "الوزن الصافي الفعلي (كغم)")} *</Label>
-            <Input
-              type="number" min={1} step="any" inputMode="decimal" autoFocus
-              className="text-end tabular-nums text-lg h-11"
-              value={kg}
-              onChange={(e) => setKg(e.target.value)}
-              placeholder="0"
-            />
+          <div className="space-y-2">
+            <div>
+              <Label>{t("Actual net weight per line", "الوزن الصافي الفعلي لكل بند")} *</Label>
+              <p className="text-xs text-slate-400">
+                {t("Enter each value in kilograms (kg), not tons.", "أدخل القيمة بالكيلوغرام (كغم)، وليس بالطن.")}
+              </p>
+            </div>
+            {order.lines.map((l, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-slate-700 truncate">
+                    {(lang === "ar" && l.productAr) || l.product || "—"}
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    {t("Ordered", "المطلوب")} {(l.lineWeightKg / 1000).toFixed(3)} {t("t", "طن")}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    type="number" min={1} step="any" inputMode="decimal" autoFocus={i === 0}
+                    className="w-32 text-end tabular-nums h-10"
+                    value={kgs[i] ?? ""}
+                    onChange={(e) => setKgs((prev) => prev.map((v, j) => (j === i ? e.target.value : v)))}
+                    placeholder="0"
+                  />
+                  <span className="text-sm text-slate-400 w-9 flex-shrink-0">{t("kg", "كغم")}</span>
+                </div>
+              </div>
+            ))}
           </div>
 
-          {valid && (
+          {allValid && (
             <div
               className={
                 "rounded-lg px-3 py-2 flex items-center justify-between border " +
@@ -109,7 +150,7 @@ export function WeighDialog({
               </bdi>
             </div>
           )}
-          {valid && wide && (
+          {allValid && wide && (
             <p className="text-xs text-amber-700">
               {t(
                 "Beyond ±0.5% — this order will show up in the variance report.",
@@ -137,7 +178,7 @@ export function WeighDialog({
 
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose} disabled={busy}>{t("Cancel", "إلغاء")}</Button>
-          <Button className="bg-orange-600 hover:bg-orange-700" onClick={submit} disabled={busy || !valid}>
+          <Button className="bg-orange-600 hover:bg-orange-700" onClick={submit} disabled={busy || !allValid}>
             {busy ? t("Posting…", "جارٍ الترحيل…") : t("Weigh & post", "الوزن والترحيل")}
           </Button>
         </DialogFooter>

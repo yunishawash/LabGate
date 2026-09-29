@@ -5,6 +5,7 @@ import { badRequest, notFound, oid } from "@/lib/apiHelpers";
 import { visibilityFilter, andFilters, type Actor } from "@/lib/salesWorkflow";
 import { liveDelegationRoles } from "@/lib/salesAuth";
 import SalesOrder from "@/models/SalesOrder";
+import AuditLog from "@/models/AuditLog";
 import { buildOrderFormHtml } from "@/lib/pdf/orderFormTemplate";
 import { htmlToPdf } from "@/lib/pdf/browser";
 
@@ -30,7 +31,14 @@ export async function GET(_req: NextRequest, { params }: Params) {
   ).lean();
   if (!order) return notFound("Order not found");
 
-  const html = buildOrderFormHtml(order as never);
+  // Same feed and order as the "History" tab — see that route's own comment
+  // on why visibility is checked against the order, not the log.
+  const history = await AuditLog.find({ entityType: "sales_order", entityId: id })
+    .sort({ timestamp: -1 })
+    .limit(200)
+    .lean();
+
+  const html = buildOrderFormHtml(order as never, history as never);
 
   let pdf: Buffer;
   try {

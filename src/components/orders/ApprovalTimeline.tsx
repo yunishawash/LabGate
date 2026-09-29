@@ -27,8 +27,9 @@ export function ApprovalTimeline({ order }: { order: OrderRow }) {
   const { lang, t } = useLang();
   const now = useNow();
 
-  // Stage 7 holds two steps. Grouping by index means the dual gate needs no
-  // special branch here either — it is just a stage that owns two rows.
+  // Grouping by index rather than assuming one stage per index means a dual
+  // sign-off (an index owning two rows) needs no special branch here either —
+  // none currently exists, but nothing here depends on that staying true.
   const byIndex = new Map<number, StageDef[]>();
   for (const s of SALES_STAGES) {
     if (!byIndex.has(s.index)) byIndex.set(s.index, []);

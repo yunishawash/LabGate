@@ -1,5 +1,7 @@
 import fs from "fs";
 import path from "path";
+import { SALES_STAGES, type StageDef } from "@/lib/salesWorkflow";
+import { ROLE_LABELS, LAB_STATUS_LABELS, type UserRole, type LabStatus } from "@/types";
 
 /** Shape this template actually reads — a lean SalesOrder plus its steps. */
 export interface OrderFormLine {
@@ -10,13 +12,20 @@ export interface OrderFormLine {
   lineWeightKg?: number;
   bonusBags?: number;
   note?: string;
+  /** This line's own weighbridge reading — populated only once stage 8 has
+   *  weighed this specific product, independently of every other line. */
+  actualWeightKg?: number | null;
 }
 
 export interface OrderFormStep {
   stageKey: string;
+  stageIndex?: number;
+  status?: string;
   actedByName?: string;
   actedAt?: string | Date | null;
   actedAs?: string;
+  actedForRole?: string;
+  note?: string;
 }
 
 export interface OrderFormData {
@@ -33,6 +42,23 @@ export interface OrderFormData {
   collections?: { note?: string; byName?: string; at?: string | Date | null };
   packing?: { note?: string; byName?: string; at?: string | Date | null };
   steps?: OrderFormStep[];
+  status?: string;
+  currentStageIndex?: number;
+  rejection?: { reason?: string; byName?: string; at?: string | Date | null };
+  labOverallStatus?: string;
+  totalWeightKg?: number;
+  actualNetWeightKg?: number | null;
+  variancePct?: number | null;
+}
+
+/** One audit-log row — the same feed the "History" tab reads, sorted the
+ *  same way (newest first) so the printed log reads exactly like the screen. */
+export interface OrderFormHistoryEntry {
+  action: string;
+  field?: string;
+  performedByName?: string;
+  notes?: string;
+  timestamp?: string | Date;
 }
 
 /** Minimum rows the items table always shows, so a short order still fills
@@ -54,6 +80,13 @@ function fmtDate(d?: string | Date | null): string {
   const date = typeof d === "string" ? new Date(d) : d;
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleDateString("en-GB"); // dd/mm/yyyy — matches the footer's own date format
+}
+
+function fmtDateTime(d?: string | Date | null): string {
+  if (!d) return "";
+  const date = typeof d === "string" ? new Date(d) : d;
+  if (Number.isNaN(date.getTime())) return "";
+  return `${date.toLocaleDateString("en-GB")} ${date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
 }
 
 function fmtTons(kg?: number): string {
@@ -116,7 +149,7 @@ function itemRows(lines: OrderFormLine[]): string {
         <td class="text-right">${esc(l.productAr || l.product || "")}</td>
         <td>${l.bagCount ?? ""}</td>
         <td>${fmtTons(l.lineWeightKg)}</td>
-        <td></td>
+        <td>${l.actualWeightKg != null ? fmtTons(l.actualWeightKg) : ""}</td>
         <td>${l.bonusBags ? esc(l.bonusBags) : ""}</td>
         <td class="text-right">${esc(l.note || "")}</td>
       </tr>`
@@ -138,14 +171,289 @@ function signatureCell(step: OrderFormStep | undefined): string {
   return `${esc(step.actedByName)}${capacity}<br/><span style="font-weight:400;font-size:10px;">${fmtDate(step.actedAt)}</span>`;
 }
 
+type ChainState = "done" | "current" | "pending" | "rejected" | "skipped";
+
+const CHAIN_BADGE_CLASS: Record<ChainState, string> = {
+  done: "chain-badge-done",
+  current: "chain-badge-current",
+  pending: "chain-badge-pending",
+  rejected: "chain-badge-rejected",
+  skipped: "chain-badge-skipped",
+};
+
+const CHAIN_BADGE_LABEL: Record<ChainState, string> = {
+  done: "معتمدة",
+  current: "قيد الإجراء",
+  pending: "بالانتظار",
+  rejected: "مرفوضة",
+  skipped: "متخطاة",
+};
+
+function chainState(
+  steps: OrderFormStep[],
+  index: number,
+  currentStageIndex: number | undefined,
+  status: string | undefined
+): ChainState {
+  const matching = steps.filter((s) => s.stageIndex === index);
+  if (matching.some((s) => s.status === "rejected")) return "rejected";
+  if (matching.length && matching.every((s) => s.status === "approved" || s.status === "completed")) return "done";
+  if (matching.some((s) => s.status === "skipped")) return "skipped";
+  if (index === currentStageIndex && status === "Pending") return "current";
+  return "pending";
+}
+
+/** One signatory line under a chain stage: who, when, and in what capacity. */
+function chainSignatureLine(stage: StageDef, step: OrderFormStep | undefined, indented: boolean): string {
+  const roleLabel = ROLE_LABELS[stage.role as UserRole]?.ar ?? stage.role;
+  const done = step?.status === "approved" || step?.status === "completed";
+
+  let body: string;
+  if (done) {
+    const capacity =
+      step!.actedAs && step!.actedAs !== "primary"
+        ? ` <span class="chain-capacity">· بالإنابة عن ${esc(ROLE_LABELS[(step!.actedForRole || stage.role) as UserRole]?.ar ?? step!.actedForRole)}</span>`
+        : "";
+    const when = step!.actedAt ? ` <span class="chain-muted">· ${fmtDateTime(step!.actedAt)}</span>` : "";
+    body = `${esc(step!.actedByName) || '<span class="chain-muted">مكتملة</span>'}${capacity}${when}`;
+  } else if (step?.status === "skipped") {
+    body = '<span class="chain-muted">لم يتم الوصول إليها</span>';
+  } else if (step?.status === "rejected") {
+    body = '<span class="chain-rejected-text">رُفضت هنا</span>';
+  } else {
+    body = '<span class="chain-muted">بالانتظار</span>';
+  }
+
+  const note = step?.note
+    ? `<div class="chain-note">${esc(step.note)}</div>`
+    : "";
+
+  return `
+    <div class="chain-sig${indented ? " chain-sig-indented" : ""}">
+      ${indented ? `<span class="chain-role">${esc(roleLabel)}</span>` : ""}
+      <span>${body}</span>
+    </div>
+    ${note}`;
+}
+
+/** Builds the full approval-chain page — the same sequence shown on the
+ *  order's "Approval chain" tab, laid out for print rather than a screen. */
+function buildApprovalChainPage(order: OrderFormData): string {
+  const steps = order.steps || [];
+
+  const byIndex = new Map<number, StageDef[]>();
+  for (const s of SALES_STAGES) {
+    if (!byIndex.has(s.index)) byIndex.set(s.index, []);
+    byIndex.get(s.index)!.push(s);
+  }
+  const indexes = [...byIndex.keys()].sort((a, b) => a - b);
+
+  const rows = indexes
+    .map((i) => {
+      const stages = byIndex.get(i)!;
+      const dual = stages.length > 1;
+      const state = chainState(steps, i, order.currentStageIndex, order.status);
+      const title = stages[0].groupAr ?? stages[0].ar;
+
+      const signed = stages.filter((s) => {
+        const st = stepByKey(steps, s.key)?.status;
+        return st === "approved" || st === "completed";
+      }).length;
+      const dualBadge = dual
+        ? `<span class="chain-badge ${signed === 2 ? "chain-badge-done" : "chain-badge-pending"}">${signed}/2 توقيع</span>`
+        : "";
+
+      const sigLines = stages
+        .map((stage) => chainSignatureLine(stage, stepByKey(steps, stage.key), dual))
+        .join("\n");
+
+      const extra: string[] = [];
+      if (i === 6 && order.labOverallStatus) {
+        const key = (order.labOverallStatus in LAB_STATUS_LABELS ? order.labOverallStatus : "pass") as LabStatus;
+        extra.push(`<div class="chain-extra"><span class="chain-badge chain-badge-lab">${esc(LAB_STATUS_LABELS[key].ar)}</span></div>`);
+      }
+      if (i === 8 && order.actualNetWeightKg != null) {
+        const pct = order.variancePct ?? 0;
+        extra.push(`
+          <div class="chain-extra chain-weigh">
+            <span class="chain-muted">المطلوب</span> ${fmtTons(order.totalWeightKg)} طن
+            <span class="chain-muted">←</span>
+            <span class="chain-muted">الفعلي</span> <span class="bold">${fmtTons(order.actualNetWeightKg)} طن</span>
+            <span>(${pct > 0 ? "+" : ""}${pct}%)</span>
+          </div>`);
+      }
+
+      return `
+      <div class="chain-item">
+        <div class="chain-head">
+          <span class="chain-index">${i}/8</span>
+          <span class="chain-stage-name">${esc(title)}</span>
+          <span class="chain-badges">
+            ${dualBadge}
+            <span class="chain-badge ${CHAIN_BADGE_CLASS[state]}">${CHAIN_BADGE_LABEL[state]}</span>
+          </span>
+        </div>
+        <div class="chain-body">
+          ${sigLines}
+        </div>
+        ${extra.join("\n")}
+      </div>`;
+    })
+    .join("\n");
+
+  const rejectionBlock =
+    order.status === "Rejected" && order.rejection
+      ? `
+      <div class="chain-rejection">
+        <div class="chain-rejection-title">رفضها ${esc(order.rejection.byName || "")}</div>
+        <div class="chain-rejection-reason">${esc(order.rejection.reason || "")}</div>
+      </div>`
+      : "";
+
+  return `
+  <div class="section">
+    ${pageHeadHtml("Approval Chain", "سلسلة الاعتماد", order.orderNumber)}
+
+    <div class="chain-list">
+      ${rows}
+    </div>
+
+    ${rejectionBlock}
+  </div>`;
+}
+
+/** The small header block (logo/title row + serial number) every secondary
+ *  page opens with — kept in one place so page 2+ never drift from page 1's
+ *  own hand-written header. */
+function pageHeadHtml(titleEn: string, titleAr: string, orderNumber: string, badge?: string): string {
+  return `
+    <table class="header-table">
+      <tr>
+        <td class="header-company"><div class="company-name">Golden Wheat Mills</div></td>
+        <td class="header-title">
+          <div class="sales-order">${esc(titleEn)}</div>
+          <div class="sales-order-ar">${esc(titleAr)}</div>
+        </td>
+        <td class="header-logo"></td>
+      </tr>
+    </table>
+
+    <div class="serial-row">
+      <span>الرقم المتسلسل</span>
+      <span class="serial-value">${esc(orderNumber)}</span>
+      ${badge ? `<span class="hist-page-badge">${esc(badge)}</span>` : ""}
+    </div>`;
+}
+
+function footerHtml(page: number, total: number): string {
+  return `
+  <div class="footer">
+    <table class="footer-table">
+      <tr>
+        <td class="footer-form">Form No. : MS-SC/F7</td>
+        <td class="footer-issue">Issue No. : 1/0</td>
+        <td class="footer-date">Issue Date: ${fmtDate(new Date())}</td>
+        <td class="footer-page">${page}/${total}</td>
+      </tr>
+    </table>
+  </div>`;
+}
+
+const ACTION_LABELS_AR: Record<string, string> = {
+  created: "إنشاء الطلبية",
+  updated: "تعديل الطلبية",
+  stage_approved: "اعتماد مرحلة",
+  stage_rejected: "رفض الطلبية",
+  lab_attached: "إرفاق نتائج المختبر",
+  weighed_posted: "الوزن والترحيل",
+};
+
+function historyStageLabel(field: string | undefined): string {
+  if (!field) return "";
+  const stage = SALES_STAGES.find((s) => s.key === field);
+  return stage ? stage.ar : field;
+}
+
+function historyItemHtml(e: OrderFormHistoryEntry): string {
+  const stageLabel = historyStageLabel(e.field);
+  return `
+    <div class="hist-item">
+      <div class="hist-head">
+        <bdi class="hist-date">${fmtDateTime(e.timestamp)}</bdi>
+        <span class="hist-action">${esc(ACTION_LABELS_AR[e.action] ?? e.action)}${stageLabel ? ` <span class="chain-muted">· ${esc(stageLabel)}</span>` : ""}</span>
+      </div>
+      <div class="hist-by">${esc(e.performedByName || "")}</div>
+      ${e.notes ? `<div class="hist-note">${esc(e.notes)}</div>` : ""}
+    </div>`;
+}
+
+/** Rough printed height of one entry, in mm — long notes wrap onto several
+ *  lines, and a page must stop accepting entries before that wrapping runs it
+ *  past the physical sheet. Not exact layout, just enough to keep every
+ *  history page inside its own A4 sheet for the common case. */
+function estimateHistoryHeightMm(e: OrderFormHistoryEntry): number {
+  const CHARS_PER_LINE = 85;
+  const noteLines = e.notes ? Math.max(1, Math.ceil(e.notes.length / CHARS_PER_LINE)) : 0;
+  return 13 + noteLines * 4.2;
+}
+
+/** Content budget for the entries area of a history page — the A4 sheet
+ *  minus margins, header, serial row and footer. */
+const HISTORY_PAGE_BUDGET_MM = 205;
+
+function paginateHistory(entries: OrderFormHistoryEntry[]): OrderFormHistoryEntry[][] {
+  const pages: OrderFormHistoryEntry[][] = [];
+  let current: OrderFormHistoryEntry[] = [];
+  let used = 0;
+  for (const e of entries) {
+    const h = estimateHistoryHeightMm(e);
+    if (current.length && used + h > HISTORY_PAGE_BUDGET_MM) {
+      pages.push(current);
+      current = [];
+      used = 0;
+    }
+    current.push(e);
+    used += h;
+  }
+  if (current.length) pages.push(current);
+  return pages;
+}
+
+/** One page per chunk, each numbered "صفحة N من M" against the log itself —
+ *  on top of the document-wide "page/total" footer every page already carries. */
+function buildHistoryPages(
+  order: OrderFormData,
+  chunks: OrderFormHistoryEntry[][],
+  docPageStart: number,
+  docPageTotal: number
+): string {
+  return chunks
+    .map((chunk, i) => `
+<div class="page page-break">
+  <div class="section">
+    ${pageHeadHtml("Activity Log", "سجل الحركات", order.orderNumber, `صفحة ${i + 1} من ${chunks.length}`)}
+
+    <div class="hist-list">
+      ${chunk.map(historyItemHtml).join("\n")}
+    </div>
+  </div>
+
+  ${footerHtml(docPageStart + i, docPageTotal)}
+</div>`)
+    .join("\n");
+}
+
 /**
  * Builds the MS-SC/F7 printable HTML. Every field tolerates `undefined` —
  * orders created before these fields existed print blank ruled lines, not a
  * crash, since the form's whole job is to still work with a pen.
  */
-export function buildOrderFormHtml(order: OrderFormData): string {
+export function buildOrderFormHtml(order: OrderFormData, history: OrderFormHistoryEntry[] = []): string {
   const salesManagerStep = stepByKey(order.steps, "sales_manager_approval");
   const gmStep = stepByKey(order.steps, "general_manager_approval");
+
+  const historyChunks = paginateHistory(history);
+  const totalPages = 2 + historyChunks.length;
 
   const logo = logoDataUri();
   const logoCell = logo
@@ -228,11 +536,48 @@ td, th { border: 1px solid #000; padding: 4px 6px; }
 .footer-table td { height: 6mm; text-align: center; padding: 2px 4px; }
 .footer-page { width: 10%; } .footer-date { width: 32%; } .footer-issue { width: 30%; } .footer-form { width: 28%; }
 
+.chain-list { margin-top: 4mm; }
+.chain-item { border: 1px solid #000; border-radius: 4px; padding: 6px 10px; margin-bottom: 5px; }
+.chain-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.chain-index { font-size: 11px; color: #555; font-family: monospace; }
+.chain-stage-name { font-weight: bold; font-size: 13px; }
+.chain-badges { margin-inline-start: auto; display: flex; align-items: center; gap: 6px; }
+.chain-badge { font-size: 10px; font-weight: bold; padding: 2px 8px; border-radius: 9px; white-space: nowrap; }
+.chain-badge-done { background: #d1fae5; color: #065f46; }
+.chain-badge-current { background: #e0f2fe; color: #075985; }
+.chain-badge-pending { background: #f1f5f9; color: #64748b; }
+.chain-badge-rejected { background: #fee2e2; color: #991b1b; }
+.chain-badge-skipped { background: #f1f5f9; color: #94a3b8; }
+.chain-badge-lab { background: #dcfce7; color: #166534; }
+.chain-body { margin-top: 3px; font-size: 12px; }
+.chain-sig { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.chain-sig-indented { margin-inline-start: 6mm; margin-top: 2px; }
+.chain-role { font-size: 11px; color: #555; min-width: 28mm; display: inline-block; }
+.chain-muted { color: #64748b; }
+.chain-capacity { color: #92400e; font-size: 11px; }
+.chain-rejected-text { color: #991b1b; }
+.chain-note { font-size: 11px; color: #555; font-style: italic; margin-top: 2px; }
+.chain-extra { margin-top: 4px; font-size: 12px; }
+.chain-weigh span { margin-inline-end: 4px; }
+.chain-rejection { margin-top: 5mm; border: 1px solid #991b1b; border-radius: 4px; padding: 8px 10px; }
+.chain-rejection-title { font-weight: bold; color: #991b1b; font-size: 13px; }
+.chain-rejection-reason { color: #7f1d1d; font-size: 12px; margin-top: 3px; white-space: pre-wrap; }
+
+.hist-page-badge { margin-inline-start: auto; font-size: 11px; font-weight: normal; color: #64748b; }
+.hist-list { margin-top: 4mm; }
+.hist-item { border-bottom: 1px solid #ccc; padding: 5px 2px; }
+.hist-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.hist-date { font-size: 11px; color: #555; white-space: nowrap; }
+.hist-action { font-weight: bold; font-size: 12px; }
+.hist-by { font-size: 11px; color: #475569; margin-top: 2px; }
+.hist-note { font-size: 11px; color: #334155; white-space: pre-wrap; margin-top: 2px; }
+
 /* Fidelity between the Chrome print preview and the Playwright/Puppeteer
    page.pdf() path: both rasterize @page + these rules identically as long
    as nothing depends on viewport size or animation. */
-tr, td, th, table, .notes-table, .approval-table, .header-table, .items-table { break-inside: avoid; page-break-inside: avoid; }
+tr, td, th, table, .notes-table, .approval-table, .header-table, .items-table, .chain-item, .hist-item { break-inside: avoid; page-break-inside: avoid; }
 .page { page-break-after: avoid; }
+.page-break { page-break-before: always; }
 </style>
 </head>
 <body>
@@ -318,16 +663,16 @@ tr, td, th, table, .notes-table, .approval-table, .header-table, .items-table { 
         <div class="note-title">ملاحظات دائرة التحصيلات :</div>
         <div class="note-body">${esc(order.collections?.note || "")}</div>
         <div class="signature-inline">
-          <span class="bold">التوقيع:</span>
-          <span class="dotted-line">${esc(order.collections?.byName || "")}</span>
+          <span class="bold">توقيع المدير المالي:</span>
+          <span class="dotted-line"></span>
         </div>
       </td>
       <td>
         <div class="note-title">ملاحظات قسم التعبئة :</div>
         <div class="note-body">${esc(order.packing?.note || "")}</div>
         <div class="signature-inline">
-          <span class="bold">التوقيع:</span>
-          <span class="dotted-line">${esc(order.packing?.byName || "")}</span>
+          <span class="bold">توقيع المدير الفنّي:</span>
+          <span class="dotted-line"></span>
         </div>
       </td>
     </tr>
@@ -341,18 +686,18 @@ tr, td, th, table, .notes-table, .approval-table, .header-table, .items-table { 
     </tr>
   </table>
 
-  <div class="footer">
-    <table class="footer-table">
-      <tr>
-        <td class="footer-form">Form No. : MS-SC/F7</td>
-        <td class="footer-issue">Issue No. : 1/0</td>
-        <td class="footer-date">Issue Date: ${fmtDate(new Date())}</td>
-        <td class="footer-page">1/1</td>
-      </tr>
-    </table>
-  </div>
+  ${footerHtml(1, totalPages)}
 
 </div>
+
+<div class="page page-break">
+  ${buildApprovalChainPage(order)}
+
+  ${footerHtml(2, totalPages)}
+</div>
+
+${buildHistoryPages(order, historyChunks, 3, totalPages)}
+
 </body>
 </html>`;
 }

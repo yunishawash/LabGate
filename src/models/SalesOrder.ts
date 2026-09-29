@@ -18,13 +18,19 @@ export interface ISalesOrderLine {
    *  `bagCount`/`lineWeightKg` so it never silently inflates the numbers the
    *  variance/report/export math already depends on. */
   bonusBags?: number;
+  /** The weighbridge fact this comment used to only promise: this product's
+   *  own scale reading, entered separately from every other line on the same
+   *  order. `null` until stage 8 resolves it. */
+  actualWeightKg: number | null;
 }
 
 /**
- * One actionable slot in the chain. There is exactly one step per stage key,
- * and stage 7 is TWO steps sharing `stageIndex: 7` — that is the whole trick
- * behind the dual sign-off. `stageComplete` asks "is every step at this index
- * done", so the joint gate needs no special case anywhere.
+ * One actionable slot in the chain. There is exactly one step per stage key;
+ * an index CAN be held by more than one step sharing that `stageIndex` (a
+ * dual sign-off) — none currently is. `stageComplete` asks "is every LIVE
+ * step at this index done", so a joint gate needs no special case anywhere,
+ * and a stage reduced from two signatures to one leaves no orphaned step
+ * blocking an order that was already in flight.
  */
 export interface ISalesOrderStep {
   stageKey: string;
@@ -112,6 +118,7 @@ const SalesOrderLineSchema = new Schema<ISalesOrderLine>(
     lineWeightKg: { type: Number, required: true },
     note:         { type: String, default: "" },
     bonusBags:    { type: Number, default: 0 },
+    actualWeightKg: { type: Number, default: null },
   },
   { _id: false }
 );

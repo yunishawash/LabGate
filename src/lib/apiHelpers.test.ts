@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { strictStr } from "./apiHelpers";
+import { strictStr, dateRange } from "./apiHelpers";
 
 /**
  * `strictStr` is the reject-instead-of-truncate counterpart to `str()` —
@@ -78,5 +78,39 @@ describe("strictStr", () => {
     const r = strictStr("a".repeat(5000), 4000, "Notes");
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain("5000");
+  });
+});
+
+/**
+ * `dateRange`'s `to` boundary must land on the SAME UTC calendar day the
+ * date-only string names, no matter what local timezone the process running
+ * this test happens to be in. `setHours` (the bug this guards against) reads
+ * the runtime's local offset, so on a server whose local time is behind UTC
+ * it silently rolls the cutoff back a whole day — "select today" would then
+ * exclude every record actually dated today.
+ */
+describe("dateRange", () => {
+  it("puts the `to` boundary at the end of that day in UTC, not local time", () => {
+    const r = dateRange(null, "2026-09-29");
+    expect(r?.$lte?.toISOString()).toBe("2026-09-29T23:59:59.999Z");
+  });
+
+  it("leaves the `from` boundary at the start of that day, already UTC by construction", () => {
+    const r = dateRange("2026-09-29", null);
+    expect(r?.$gte?.toISOString()).toBe("2026-09-29T00:00:00.000Z");
+  });
+
+  it("a single day (`from` === `to`) covers that whole UTC day, start to end", () => {
+    const r = dateRange("2026-09-29", "2026-09-29");
+    expect(r?.$gte?.toISOString()).toBe("2026-09-29T00:00:00.000Z");
+    expect(r?.$lte?.toISOString()).toBe("2026-09-29T23:59:59.999Z");
+  });
+
+  it("returns null when neither bound is given", () => {
+    expect(dateRange(null, null)).toBeNull();
+  });
+
+  it("ignores an unparseable date rather than throwing", () => {
+    expect(dateRange("not-a-date", null)).toBeNull();
   });
 });

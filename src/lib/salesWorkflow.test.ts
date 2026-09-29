@@ -32,19 +32,19 @@ function orderAt(stageIndex: number, over: Partial<OrderLike> = {}): OrderLike {
 const actor = (role: string, id = ME): Actor => ({ id, role });
 
 describe("the stage table", () => {
-  it("declares eight visible stages across nine slots", () => {
+  it("declares eight visible stages, one slot each", () => {
     expect(new Set(SALES_STAGES.map((s) => s.index)).size).toBe(8);
-    expect(SALES_STAGES).toHaveLength(9);
+    expect(SALES_STAGES).toHaveLength(8);
   });
 
-  it("holds stage 7 with two slots — this is the dual sign-off", () => {
+  it("holds stage 7 with a single slot — the GM's signature alone clears the lab results", () => {
     const seven = stagesAt(7);
-    expect(seven).toHaveLength(2);
-    expect(seven.map((s) => s.role).sort()).toEqual(["general_manager", "technical_manager"]);
+    expect(seven).toHaveLength(1);
+    expect(seven[0].role).toBe("general_manager");
   });
 
   it("gives stages 5, 7 and 8 no automatic deputy, by client decision", () => {
-    for (const key of ["technical_manager_approval", "lab_signoff_gm", "lab_signoff_tm", "weighbridge_post"]) {
+    for (const key of ["technical_manager_approval", "lab_signoff_gm", "weighbridge_post"]) {
       expect(stageByKey(key)?.deputyRole).toBeUndefined();
     }
   });
@@ -77,24 +77,29 @@ describe("MIN_STAGE_BY_ROLE — the visibility floor", () => {
   });
 });
 
-describe("stageComplete — the joint gate", () => {
-  it("is false with only ONE of the two stage-7 signatures", () => {
-    const o = orderAt(7);
-    o.steps.find((s) => s.stageKey === "lab_signoff_gm")!.status = "approved";
-    expect(stageComplete(o, 7)).toBe(false);
-  });
-
-  it("is true only once BOTH have signed", () => {
-    const o = orderAt(7);
-    o.steps.find((s) => s.stageKey === "lab_signoff_gm")!.status = "approved";
-    o.steps.find((s) => s.stageKey === "lab_signoff_tm")!.status = "approved";
-    expect(stageComplete(o, 7)).toBe(true);
-  });
-
+describe("stageComplete", () => {
   it("needs no special case for single-slot stages", () => {
     const o = orderAt(3);
     expect(stageComplete(o, 2)).toBe(true);
     expect(stageComplete(o, 3)).toBe(false);
+  });
+
+  it("stage 7 clears on the GM's signature alone", () => {
+    const o = orderAt(7);
+    expect(stageComplete(o, 7)).toBe(false);
+    o.steps.find((s) => s.stageKey === "lab_signoff_gm")!.status = "approved";
+    expect(stageComplete(o, 7)).toBe(true);
+  });
+
+  it("ignores an orphaned step from a stage reduced from two signatures to one", () => {
+    // An order raised before this change can still carry the old
+    // `lab_signoff_tm` step, forever "pending", in its stored `steps` array —
+    // SALES_STAGES no longer defines it, so it must not block the GM's own
+    // signature from completing the stage.
+    const o = orderAt(7);
+    o.steps.push({ stageKey: "lab_signoff_tm", stageIndex: 7, role: "technical_manager", kind: "approval", status: "pending" });
+    o.steps.find((s) => s.stageKey === "lab_signoff_gm")!.status = "approved";
+    expect(stageComplete(o, 7)).toBe(true);
   });
 });
 
@@ -108,22 +113,20 @@ describe("actableStages", () => {
     expect(actableStages(orderAt(3), actor("weighbridge"))).toHaveLength(0);
   });
 
-  it("offers each manager only their own half of stage 7", () => {
+  it("offers stage 7 to the GM only — the technical manager has no slot there", () => {
     expect(actableStages(orderAt(7), actor("general_manager")).map((s) => s.key))
       .toEqual(["lab_signoff_gm"]);
-    expect(actableStages(orderAt(7), actor("technical_manager")).map((s) => s.key))
-      .toEqual(["lab_signoff_tm"]);
+    expect(actableStages(orderAt(7), actor("technical_manager"))).toHaveLength(0);
   });
 
-  it("stops offering a slot once that half is signed", () => {
+  it("stops offering stage 7 once the GM has signed", () => {
     const o = orderAt(7);
     o.steps.find((s) => s.stageKey === "lab_signoff_gm")!.status = "approved";
     expect(actableStages(o, actor("general_manager"))).toHaveLength(0);
-    expect(actableStages(o, actor("technical_manager"))).toHaveLength(1);
   });
 
-  it("offers admin both halves", () => {
-    expect(actableStages(orderAt(7), actor("admin"))).toHaveLength(2);
+  it("offers admin the single stage-7 slot", () => {
+    expect(actableStages(orderAt(7), actor("admin"))).toHaveLength(1);
   });
 
   it("offers nothing on a terminal order — rejection is final", () => {

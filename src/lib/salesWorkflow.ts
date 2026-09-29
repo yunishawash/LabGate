@@ -45,7 +45,6 @@ export type StageKey =
   | "technical_manager_approval"
   | "lab_results"
   | "lab_signoff_gm"
-  | "lab_signoff_tm"
   | "weighbridge_post";
 
 export type StageKind = "create" | "approval" | "data_entry" | "weigh";
@@ -55,7 +54,9 @@ export type OrderStatus = "Pending" | "Posted" | "Rejected";
 
 export interface StageDef {
   key: StageKey;
-  /** 1..8 — the number a person sees. Stage 7 is held by TWO stages. */
+  /** 1..8 — the number a person sees. An index CAN be held by more than one
+   *  stage (a dual sign-off) — none currently is, but `stageComplete` and the
+   *  UI stay generic over that shape rather than assuming exactly one. */
   index: number;
   role: SalesRole;
   /** May act ONLY while every holder of `role` is absent. Undefined = no
@@ -85,8 +86,11 @@ export const SALES_STAGES: readonly StageDef[] = [
   // be made visible rather than silent (SPEC §8.2).
   { key: "technical_manager_approval", index: 5, role: "technical_manager",                                  kind: "approval",   en: "Technical Manager",  ar: "المدير التقني" },
   { key: "lab_results",                index: 6, role: "lab_technician",                                     kind: "data_entry", en: "Lab results",        ar: "نتائج المختبر" },
-  { key: "lab_signoff_gm",             index: 7, role: "general_manager",                                    kind: "approval",   en: "GM sign-off",        groupEn: "Lab results sign-off", groupAr: "اعتماد نتائج المختبر",        ar: "اعتماد المدير العام" },
-  { key: "lab_signoff_tm",             index: 7, role: "technical_manager",                                  kind: "approval",   en: "Tech. sign-off",     groupEn: "Lab results sign-off", groupAr: "اعتماد نتائج المختبر",     ar: "اعتماد المدير التقني" },
+  // The General Manager's signature alone clears the lab results and sends the
+  // order to the weighbridge — the client's rule. The Technical Manager still
+  // sees the sample and this stage's report (his visibility floor is stage 5,
+  // set below), he just no longer holds a second signature here.
+  { key: "lab_signoff_gm",             index: 7, role: "general_manager",                                    kind: "approval",   en: "Lab results sign-off", ar: "اعتماد نتائج المختبر" },
   { key: "weighbridge_post",           index: 8, role: "weighbridge",                                        kind: "weigh",      en: "Weighbridge & post", ar: "الميزان والترحيل" },
 ] as const;
 
@@ -158,11 +162,17 @@ export const isObjectIdString = (v: string): boolean => /^[a-f\d]{24}$/i.test(v)
 /**
  * Is stage `i` fully satisfied?
  *
- * This is where the dual sign-off falls out for free: stage 7 has two steps, so
- * "every step at this index is done" needs both. No special case anywhere.
+ * A stage index CAN be held by more than one live stage (a dual sign-off) —
+ * "every step at this index is done" then needs every one of them, no special
+ * case required. Only steps whose key is still part of the CURRENT table
+ * count: an order raised before a stage was reduced from two signatures to
+ * one (or any other reshuffle) may still carry the old, now-orphaned step in
+ * its stored `steps` array — this ignores it rather than waiting forever on a
+ * signature nothing can offer any more.
  */
 export function stageComplete(order: OrderLike, i: number): boolean {
-  const steps = order.steps.filter((s) => s.stageIndex === i);
+  const liveKeys = new Set<string>(stagesAt(i).map((s) => s.key));
+  const steps = order.steps.filter((s) => s.stageIndex === i && liveKeys.has(s.stageKey));
   return steps.length > 0 && steps.every((s) => s.status === "approved" || s.status === "completed");
 }
 

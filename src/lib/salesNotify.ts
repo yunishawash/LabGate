@@ -91,9 +91,9 @@ async function actorsFor(stage: StageDef, now = new Date()): Promise<Recipient[]
 /**
  * The order has arrived at a stage — tell whoever can move it.
  *
- * Stage 7 holds two stages, so both signatories are told; that is the same
- * "one stage, many slots" shape the engine uses everywhere else, not a special
- * case here.
+ * A dual-slot stage would notify every signatory here — the same "one stage,
+ * many slots" shape the engine uses everywhere else, not a special case —
+ * though no stage currently has more than one.
  *
  * `exclude` is the person who just acted. Someone who holds two consecutive
  * stages would otherwise be notified about the order they just pushed forward,

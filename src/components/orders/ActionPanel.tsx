@@ -28,7 +28,7 @@ export function ActionPanel({
 }: {
   order: OrderRow & {
     customerId?: string;
-    lines?: { productId: string; product?: string; productAr?: string }[];
+    lines: { productId: string; product?: string; productAr?: string; bagWeightKg?: number; bagCount?: number; lineWeightKg: number }[];
     labSamples?: { productId: string }[];
   };
   onDone: () => void;

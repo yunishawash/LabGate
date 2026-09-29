@@ -20,6 +20,7 @@
     "migrate:customer-namekey": "tsx src/scripts/backfill-customer-namekey.ts",
     "check:concurrency": "tsx src/scripts/check-concurrency.ts",
     "backfill:ar": "tsx src/scripts/backfill-arabic-names.ts",
+    "backfill:line-weight": "tsx src/scripts/backfill-line-actual-weight.ts",
     "seed:prod": "tsx src/scripts/seed-production.ts",
     "clear:demo": "tsx src/scripts/clear-demo-data.ts"
   },
