@@ -4,13 +4,14 @@ import Link from "next/link";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from "recharts";
-import { BarChart3, Download } from "lucide-react";
+import { ArrowLeft, ArrowRight, BarChart3, Download } from "lucide-react";
 import { useLang } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { MultiCombobox } from "@/components/ui/multi-combobox";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
+import { QcStatusBadge } from "@/components/ui/qc-status-badge";
 import { formatDate } from "@/lib/utils";
-import { SALES_STAGES } from "@/lib/salesWorkflow";
+import type { LabStatus } from "@/types";
 
 /**
  * Hours, told at the scale a person would use.
@@ -29,58 +30,52 @@ function useHours() {
   };
 }
 
-type ReportKey = "cycleTime" | "rejections" | "variance" | "customers" | "coverage" | "weightTrend";
+type ReportKey = "orders" | "variance" | "weightTrend" | "customers";
 
 const TABS: { key: ReportKey; en: string; ar: string; question: [string, string] }[] = [
-  { key: "cycleTime",  en: "Cycle time",  ar: "زمن الدورة",
-    question: ["Which desk holds orders the longest?", "أي مكتب يحتجز الطلبيات أطول مدّة؟"] },
-  { key: "rejections", en: "Rejections",  ar: "الرفض",
-    question: ["Why do orders die, and where?", "لماذا تتوقّف الطلبيات، وأين؟"] },
-  { key: "variance",   en: "Weight variance", ar: "فروقات الوزن",
+  { key: "orders", en: "Orders", ar: "الطلبيات",
+    question: ["Every order, line by line", "كل طلبية، بندًا بندًا"] },
+  { key: "variance", en: "Weight variance", ar: "فروقات الوزن",
     question: ["Are we shipping what we sold?", "هل نشحن ما بعناه فعلاً؟"] },
   { key: "weightTrend", en: "Ordered vs weighed", ar: "المطلوب مقابل الموزون",
     question: ["Ordered vs weighed, month by month", "المطلوب مقابل الموزون، شهرًا بشهر"] },
-  { key: "customers",  en: "Customers",   ar: "الزبائن",
+  { key: "customers", en: "Customers", ar: "الزبائن",
     question: ["Who are our real customers?", "من هم زبائننا الحقيقيون؟"] },
-  { key: "coverage",   en: "Coverage",    ar: "التغطية",
-    question: ["How often is a desk signed by somebody else?", "كم مرّة يوقّع شخص غير صاحب المكتب؟"] },
 ];
 
-const EXPORTS: { type: string; en: string; ar: string }[] = [
-  { type: "orders",    en: "Orders",     ar: "الطلبيات" },
-  { type: "pipeline",  en: "Pipeline",   ar: "خط السير" },
-  { type: "cycleTime", en: "Cycle time", ar: "زمن الدورة" },
-];
+/** Orders, Weight variance and Ordered-vs-weighed share the same three
+ *  filters (customer, product, date). Customers has none — its own report is
+ *  already an all-time roll-up per customer. */
+const FILTERED_TABS: ReportKey[] = ["orders", "variance", "weightTrend"];
 
 export default function ReportsPage() {
   const { lang, t } = useLang();
-  const [tab, setTab] = useState<ReportKey>("cycleTime");
+  const [tab, setTab] = useState<ReportKey>("orders");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [customerIds, setCustomerIds] = useState<string[]>([]);
+  const [productIds, setProductIds] = useState<string[]>([]);
   const [data, setData] = useState<Record<string, never> | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Only the "Ordered vs weighed" tab uses these — fetched once, on demand,
-  // the same lazy pattern the order dialog's own customer picker uses.
-  const [trendCustomerId, setTrendCustomerId] = useState("");
-  const [trendProductId, setTrendProductId] = useState("");
   const [customers, setCustomers] = useState<{ _id: string; name: string; nameAr?: string }[]>([]);
   const [products, setProducts] = useState<{ _id: string; name: string; nameAr?: string }[]>([]);
 
   useEffect(() => {
-    if (tab !== "weightTrend" || customers.length || products.length) return;
     fetch("/api/customers?limit=1000").then((r) => r.json()).then((d) => setCustomers(d.customers || [])).catch(() => {});
     fetch("/api/lab/products").then((r) => r.json()).then((d) => setProducts(d.products || [])).catch(() => {});
-  }, [tab, customers.length, products.length]);
+  }, []);
+
+  const usesFilters = FILTERED_TABS.includes(tab);
 
   const load = useCallback(async () => {
     setLoading(true);
     const p = new URLSearchParams({ report: tab });
-    if (from) p.set("from", from);
-    if (to) p.set("to", to);
-    if (tab === "weightTrend") {
-      if (trendCustomerId) p.set("customerId", trendCustomerId);
-      if (trendProductId) p.set("productId", trendProductId);
+    if (usesFilters) {
+      if (from) p.set("from", from);
+      if (to) p.set("to", to);
+      if (customerIds.length) p.set("customerIds", customerIds.join(","));
+      if (productIds.length) p.set("productIds", productIds.join(","));
     }
     try {
       const res = await fetch(`/api/reports?${p}`);
@@ -89,20 +84,16 @@ export default function ReportsPage() {
       setData(null);
     }
     setLoading(false);
-  }, [tab, from, to, trendCustomerId, trendProductId]);
+  }, [tab, from, to, customerIds, productIds, usesFilters]);
 
   useEffect(() => { load(); }, [load]);
 
-  const stageName = (i: number | null | undefined) => {
-    const s = SALES_STAGES.find((x) => x.index === i);
-    if (!s) return "—";
-    return lang === "ar" ? s.groupAr ?? s.ar : s.groupEn ?? s.en;
-  };
-
-  const download = (type: string) => {
-    const p = new URLSearchParams({ type, lang });
+  const download = () => {
+    const p = new URLSearchParams({ type: "ordersDetail", lang });
     if (from) p.set("from", from);
     if (to) p.set("to", to);
+    if (customerIds.length) p.set("customerIds", customerIds.join(","));
+    if (productIds.length) p.set("productIds", productIds.join(","));
     // `assign()` rather than assigning to `location.href`: React Compiler
     // rejects writing to a global, and the response is Content-Disposition:
     // attachment, so the browser downloads it without leaving the page.
@@ -110,6 +101,8 @@ export default function ReportsPage() {
   };
 
   const active = TABS.find((x) => x.key === tab)!;
+  const customerOptions = customers.map((c) => ({ value: c._id, label: (lang === "ar" && c.nameAr) || c.name }));
+  const productOptions = products.map((p) => ({ value: p._id, label: (lang === "ar" && p.nameAr) || p.name }));
 
   return (
     <div className="space-y-4">
@@ -120,14 +113,6 @@ export default function ReportsPage() {
             {t("Reports", "التقارير")}
           </h1>
           <p className="text-sm text-slate-500 mt-1">{active.question[lang === "ar" ? 1 : 0]}</p>
-        </div>
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {EXPORTS.map((e) => (
-            <Button key={e.type} variant="outline" size="sm" className="gap-1.5" onClick={() => download(e.type)}>
-              <Download size={14} />
-              {lang === "ar" ? e.ar : e.en}
-            </Button>
-          ))}
         </div>
       </div>
 
@@ -149,29 +134,31 @@ export default function ReportsPage() {
           ))}
         </div>
         <div className="flex items-center gap-1.5 ms-auto">
-          {tab === "weightTrend" && (
+          {usesFilters && (
             <>
-              <Select value={trendCustomerId || "__all__"} onValueChange={(v) => setTrendCustomerId(v === "__all__" ? "" : v)}>
-                <SelectTrigger className="h-9 w-40 text-sm"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">{t("All customers", "كل الزبائن")}</SelectItem>
-                  {customers.map((c) => (
-                    <SelectItem key={c._id} value={c._id}>{(lang === "ar" && c.nameAr) || c.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={trendProductId || "__all__"} onValueChange={(v) => setTrendProductId(v === "__all__" ? "" : v)}>
-                <SelectTrigger className="h-9 w-40 text-sm"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">{t("All products", "كل الأصناف")}</SelectItem>
-                  {products.map((p) => (
-                    <SelectItem key={p._id} value={p._id}>{(lang === "ar" && p.nameAr) || p.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <MultiCombobox
+                values={customerIds}
+                onChange={setCustomerIds}
+                options={customerOptions}
+                placeholder={t("All customers", "كل الزبائن")}
+                className="h-9 w-40 text-sm"
+              />
+              <MultiCombobox
+                values={productIds}
+                onChange={setProductIds}
+                options={productOptions}
+                placeholder={t("All products", "كل الأصناف")}
+                className="h-9 w-40 text-sm"
+              />
+              <DateRangePicker from={from} to={to} onChange={(f, toVal) => { setFrom(f); setTo(toVal); }} />
             </>
           )}
-          <DateRangePicker from={from} to={to} onChange={(f, toVal) => { setFrom(f); setTo(toVal); }} />
+          {tab === "orders" && (
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={download}>
+              <Download size={14} />
+              {t("Export", "تصدير")}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -181,14 +168,12 @@ export default function ReportsPage() {
           <p className="text-sm text-red-600">{t("Could not load this report.", "تعذّر تحميل التقرير.")}</p>
         )}
 
-        {!loading && data && tab === "cycleTime" && <CycleTime data={data} stageName={stageName} />}
-        {!loading && data && tab === "rejections" && <RejectionReport data={data} stageName={stageName} />}
+        {!loading && data && tab === "orders" && <OrdersDetailReport data={data} />}
         {!loading && data && tab === "variance" && <VarianceReport data={data} />}
         {!loading && data && tab === "weightTrend" && (
-          <WeightTrendReport data={data} customerId={trendCustomerId} productId={trendProductId} />
+          <WeightTrendReport data={data} customerIds={customerIds} productIds={productIds} />
         )}
         {!loading && data && tab === "customers" && <CustomerReport data={data} />}
-        {!loading && data && tab === "coverage" && <CoverageReport data={data} stageName={stageName} />}
       </div>
     </div>
   );
@@ -265,112 +250,114 @@ function OrdersTable({ title, orders }: { title: string; orders: VarianceOrderRo
   );
 }
 
-// ── cycle time ─────────────────────────────────────────────────────────────
-function CycleTime({ data }: { data: Record<string, never>; stageName: (i?: number | null) => string }) {
-  const { lang, t } = useLang();
-  const hours = useHours();
-  /**
-   * Named by STEP here, not by stage: a dual-slot stage (an index held by more
-   * than one signature — none currently exists) would otherwise show two rows
-   * under the same group name, and this table measures each one separately.
-   */
-  const stepName = (key: string) => {
-    const s = SALES_STAGES.find((x) => x.key === key);
-    return s ? (lang === "ar" ? s.ar : s.en) : key;
-  };
-  const rows = (data.byStage ?? []) as unknown as {
-    stageKey: string; stageIndex: number; n: number;
-    avgHours: number | null; p90Hours: number | null; maxHours: number | null;
-    people: { name: string; n: number; avgHours: number | null }[];
-  }[];
-  if (!rows.length) return <Empty>{t("No completed steps in this period.", "لا توجد خطوات مكتملة في هذه الفترة.")}</Empty>;
-  const peak = Math.max(1, ...rows.map((r) => r.avgHours ?? 0));
-
-  return (
-    <>
-      <Table headers={[t("Stage", "المرحلة"), t("Signed", "توقيعات"), t("Average", "المتوسط"), null, t("p90", "الشريحة ٩٠"), t("Longest", "الأطول")]}>
-        {rows.map((r) => (
-          <tr key={r.stageKey}>
-            <td className="py-2 text-slate-800">
-              <span className="font-mono text-xs text-slate-400 me-1.5">{r.stageIndex}</span>
-              {stepName(r.stageKey)}
-              {r.people.length > 1 && (
-                <span className="block text-xs text-slate-400">
-                  {r.people.map((p) => `${p.name} (${hours(p.avgHours)})`).join(" · ")}
-                </span>
-              )}
-            </td>
-            <Num v={r.n} />
-            <Num v={hours(r.avgHours)} cls="text-slate-900 font-medium" />
-            <td className="py-2 px-3 text-end"><Bar value={r.avgHours ?? 0} peak={peak} /></td>
-            {/* p90 is the honest headline: an average hides the one order that
-                sat for three days behind nine that moved in an hour. */}
-            <Num v={hours(r.p90Hours)} />
-            <Num v={hours(r.maxHours)} cls="text-slate-400" />
-          </tr>
-        ))}
-      </Table>
-      <p className="text-xs text-slate-400 mt-3">
-        {t(
-          "p90 = nine out of ten signatures came faster than this. Computed in the app, not the database: this MongoDB is 6.x and $percentile needs 7+.",
-          "الشريحة ٩٠ تعني أنّ تسعة من كل عشرة توقيعات كانت أسرع من هذا. تُحسَب في التطبيق لا في قاعدة البيانات: هذه النسخة MongoDB 6، و$percentile يتطلّب النسخة 7 فأعلى."
-        )}
-      </p>
-    </>
-  );
+// ── orders — every order, line by line ──────────────────────────────────────
+interface OrderDetailLine {
+  productId: string; product: string; productAr?: string;
+  bagWeightKg: number; bagCount: number; lineWeightKg: number;
+  actualWeightKg: number | null; labStatus: string | null;
+}
+interface OrderDetailRow {
+  _id: string; orderNumber: string; customer: string; customerAr?: string;
+  orderDate: string; deliveryDate: string | null; lines: OrderDetailLine[];
 }
 
-// ── rejections ─────────────────────────────────────────────────────────────
-function RejectionReport({ data, stageName }: { data: Record<string, never>; stageName: (i?: number | null) => string }) {
+const ORDERS_PAGE_SIZE = 20;
+
+function OrdersDetailReport({ data }: { data: Record<string, never> }) {
   const { lang, t } = useLang();
-  const byStage = (data.byStage ?? []) as unknown as {
-    stageIndex: number | null; count: number; kg: number; reached: number; ratePct: number | null; rejectors: string[];
-  }[];
-  const recent = (data.recent ?? []) as unknown as {
-    _id: string; orderNumber: string; customer: string; customerAr?: string;
-    totalWeightKg: number; updatedAt: string; rejection?: { reason?: string; byName?: string; stageIndex?: number | null };
-  }[];
-  if (!byStage.length) return <Empty>{t("No rejections in this period.", "لا توجد حالات رفض في هذه الفترة.")}</Empty>;
-  const peak = Math.max(1, ...byStage.map((s) => s.count));
+  const allOrders = (data.orders ?? []) as unknown as OrderDetailRow[];
+  const [page, setPage] = useState(0);
+  // A new filter/date range invalidates whatever page was open — reopening on
+  // page 3 of a now-much-shorter list would just show an empty table.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { setPage(0); }, [data]);
+
+  if (!allOrders.length) return <Empty>{t("No orders in this period.", "لا توجد طلبيات في هذه الفترة.")}</Empty>;
+
+  const pageCount = Math.max(1, Math.ceil(allOrders.length / ORDERS_PAGE_SIZE));
+  const orders = allOrders.slice(page * ORDERS_PAGE_SIZE, (page + 1) * ORDERS_PAGE_SIZE);
 
   return (
     <>
-      <Table headers={[t("Stage", "المرحلة"), t("Rejected", "مرفوضة"), null, t("Reached it", "وصلتها"), t("Rate", "النسبة"), t("Tons lost", "أطنان مفقودة")]}>
-        {byStage.map((s) => (
-          <tr key={String(s.stageIndex)}>
-            <td className="py-2 text-slate-800">
-              {stageName(s.stageIndex)}
-              {s.rejectors.length > 0 && (
-                <span className="block text-xs text-slate-400">{s.rejectors.join(" · ")}</span>
-              )}
-            </td>
-            <Num v={s.count} cls="text-slate-900 font-medium" />
-            <td className="py-2 px-3 text-end"><Bar value={s.count} peak={peak} tone="red" /></td>
-            <Num v={s.reached} cls="text-slate-400" />
-            {/* The denominator is orders that REACHED the stage, not all orders:
-                2 of 3 at finance is a different fact from 2 of 90. */}
-            <Num v={s.ratePct !== null ? `${s.ratePct}%` : null} cls={((s.ratePct ?? 0) > 20 ? "text-red-700 font-medium" : "")} />
-            <Num v={(s.kg / 1000).toFixed(1)} />
-          </tr>
-        ))}
-      </Table>
-
-      <h3 className="text-sm font-medium text-slate-900 mt-5 mb-2">{t("Most recent", "الأحدث")}</h3>
-      <ul className="divide-y divide-slate-100">
-        {recent.slice(0, 12).map((o) => (
-          <li key={o._id} className="py-2">
-            <div className="flex items-baseline gap-2 flex-wrap">
-              <bdi className="font-mono text-xs text-red-700">{o.orderNumber}</bdi>
-              <span className="text-sm text-slate-700">{(lang === "ar" && o.customerAr) || o.customer}</span>
-              <span className="text-xs text-slate-400">{stageName(o.rejection?.stageIndex)}</span>
-              <bdi className="text-xs text-slate-400 ms-auto">{formatDate(o.updatedAt)}</bdi>
-            </div>
-            <p className="text-xs text-slate-500">
-              {o.rejection?.byName} — {o.rejection?.reason}
-            </p>
-          </li>
-        ))}
-      </ul>
+    <table className="w-full text-sm">
+      <thead>
+        <tr className="text-xs text-slate-500 border-b border-slate-200">
+          <th className="font-medium py-2 text-start">{t("Order", "رقم الطلبية")}</th>
+          <th className="font-medium py-2 text-start">{t("Customer", "الزبون")}</th>
+          <th className="font-medium py-2 text-start whitespace-nowrap">{t("Created", "تاريخ الإنشاء")}</th>
+          <th className="font-medium py-2 text-start whitespace-nowrap">{t("Delivery", "تاريخ التسليم")}</th>
+          <th className="font-medium py-2 text-start">{t("Product", "الصنف")}</th>
+          <th className="font-medium py-2 text-end px-3">{t("Bag", "الكيس")}</th>
+          <th className="font-medium py-2 text-end px-3">{t("Bags", "الأكياس")}</th>
+          <th className="font-medium py-2 text-end px-3">{t("Weight", "الوزن")}</th>
+          <th className="font-medium py-2 text-end px-3">{t("Actual", "الوزن الفعلي")}</th>
+          <th className="font-medium py-2 text-end px-3">{t("Difference", "الفرق")}</th>
+          <th className="font-medium py-2 text-end px-3">{t("Lab result", "نتيجة المختبر")}</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-slate-100">
+        {orders.map((o) =>
+          o.lines.map((l, i) => {
+            const diffKg = l.actualWeightKg != null ? l.actualWeightKg - l.lineWeightKg : null;
+            return (
+              <tr key={`${o._id}-${l.productId}-${i}`}>
+                {i === 0 && (
+                  <>
+                    <td className="py-2 align-top" rowSpan={o.lines.length}>
+                      <Link href={`/orders/${o._id}`} className="font-mono text-xs text-sky-700 hover:underline">
+                        <bdi>{o.orderNumber}</bdi>
+                      </Link>
+                    </td>
+                    <td className="py-2 align-top text-slate-800" rowSpan={o.lines.length}>
+                      {(lang === "ar" && o.customerAr) || o.customer}
+                    </td>
+                    <td className="py-2 align-top text-slate-500 whitespace-nowrap" rowSpan={o.lines.length}>
+                      <bdi>{formatDate(o.orderDate)}</bdi>
+                    </td>
+                    <td className="py-2 align-top text-slate-500 whitespace-nowrap" rowSpan={o.lines.length}>
+                      {o.deliveryDate ? <bdi>{formatDate(o.deliveryDate)}</bdi> : "—"}
+                    </td>
+                  </>
+                )}
+                <td className="py-2 text-slate-700">{(lang === "ar" && l.productAr) || l.product}</td>
+                <Num v={`${l.bagWeightKg} kg`} />
+                <Num v={l.bagCount} />
+                <Num v={(l.lineWeightKg / 1000).toFixed(3)} />
+                <Num v={l.actualWeightKg != null ? (l.actualWeightKg / 1000).toFixed(3) : null} />
+                <Num
+                  v={diffKg != null ? `${diffKg > 0 ? "+" : ""}${(diffKg / 1000).toFixed(3)}` : null}
+                  cls={diffKg && Math.abs(diffKg) > 0 ? "text-amber-700 font-medium" : ""}
+                />
+                <td className="py-2 px-3 text-end">
+                  {l.labStatus ? <QcStatusBadge status={l.labStatus as LabStatus} size="xs" /> : <span className="text-slate-300">—</span>}
+                </td>
+              </tr>
+            );
+          })
+        )}
+      </tbody>
+    </table>
+    {pageCount > 1 && (
+      <div className="flex items-center justify-between pt-3 mt-2 border-t border-slate-100">
+        <button
+          onClick={() => setPage((p) => Math.max(0, p - 1))}
+          disabled={page === 0}
+          className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent"
+        >
+          {lang === "ar" ? <ArrowRight size={14} /> : <ArrowLeft size={14} />}
+        </button>
+        <span className="text-xs text-slate-500">
+          {t(`Page ${page + 1} of ${pageCount}`, `صفحة ${page + 1} من ${pageCount}`)}
+        </span>
+        <button
+          onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+          disabled={page >= pageCount - 1}
+          className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent"
+        >
+          {lang === "ar" ? <ArrowLeft size={14} /> : <ArrowRight size={14} />}
+        </button>
+      </div>
+    )}
     </>
   );
 }
@@ -461,8 +448,8 @@ interface TrendPoint {
 }
 
 function WeightTrendReport({
-  data, customerId, productId,
-}: { data: Record<string, never>; customerId: string; productId: string }) {
+  data, customerIds, productIds,
+}: { data: Record<string, never>; customerIds: string[]; productIds: string[] }) {
   const { lang, t } = useLang();
   const months = (data.months ?? []) as unknown as {
     year: number; month: number; orderedKg: number; actualKg: number;
@@ -483,7 +470,7 @@ function WeightTrendReport({
   // selected under the old data — closing the drill-down rather than
   // silently showing orders for a point that may no longer even be on screen.
   // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { setSelected(null); }, [data, customerId, productId]);
+  useEffect(() => { setSelected(null); }, [data, customerIds, productIds]);
 
   useEffect(() => {
     if (!selected) return;
@@ -491,14 +478,14 @@ function WeightTrendReport({
     const p = new URLSearchParams({
       report: "weightTrendOrders", year: String(selected.year), month: String(selected.month),
     });
-    if (customerId) p.set("customerId", customerId);
-    if (productId) p.set("productId", productId);
+    if (customerIds.length) p.set("customerIds", customerIds.join(","));
+    if (productIds.length) p.set("productIds", productIds.join(","));
     fetch(`/api/reports?${p}`)
       .then((r) => r.json())
       .then((d) => setDrillOrders(d.orders ?? []))
       .catch(() => setDrillOrders([]))
       .finally(() => setDrillLoading(false));
-  }, [selected, customerId, productId]);
+  }, [selected, customerIds, productIds]);
 
   // Computed unconditionally (never after the early `return` below) so the
   // ref-sync effect right after it keeps a stable hook count across renders.
@@ -614,43 +601,5 @@ function CustomerReport({ data }: { data: Record<string, never> }) {
         </tr>
       ))}
     </Table>
-  );
-}
-
-// ── coverage ───────────────────────────────────────────────────────────────
-function CoverageReport({ data, stageName }: { data: Record<string, never>; stageName: (i?: number | null) => string }) {
-  const { t } = useLang();
-  const rows = (data.byStage ?? []) as unknown as {
-    stageIndex: number; total: number; kinds: Record<string, number>; people: string[]; coveredPct: number;
-  }[];
-  if (!rows.length) return <Empty>{t("No signatures in this period.", "لا توجد توقيعات في هذه الفترة.")}</Empty>;
-
-  return (
-    <>
-      <Table headers={[t("Stage", "المرحلة"), t("Signatures", "توقيعات"), t("By the owner", "من صاحب المكتب"), t("Deputy", "نائب"), t("Delegate", "مفوّض"), t("Covered", "مغطّاة")]}>
-        {rows.map((r) => (
-          <tr key={r.stageIndex}>
-            <td className="py-2 text-slate-800">
-              <span className="font-mono text-xs text-slate-400 me-1.5">{r.stageIndex}</span>
-              {stageName(r.stageIndex)}
-              {r.people.length > 0 && (
-                <span className="block text-xs text-slate-400">{r.people.join(" · ")}</span>
-              )}
-            </td>
-            <Num v={r.total} />
-            <Num v={r.kinds.primary ?? 0} />
-            <Num v={r.kinds.deputy ?? 0} cls={r.kinds.deputy ? "text-amber-700" : "text-slate-300"} />
-            <Num v={r.kinds.delegate ?? 0} cls={r.kinds.delegate ? "text-amber-700" : "text-slate-300"} />
-            <Num v={`${r.coveredPct}%`} cls={r.coveredPct > 30 ? "text-amber-700 font-medium" : "text-slate-500"} />
-          </tr>
-        ))}
-      </Table>
-      <p className="text-xs text-slate-400 mt-3">
-        {t(
-          "A desk covered much of the time is a staffing fact, not a fault. It is visible only because every signature records who it was made on behalf of.",
-          "المكتب الذي يُغطَّى كثيراً واقع توظيفي لا خطأ. ولا يظهر إلّا لأنّ كل توقيع يسجّل الشخص الذي وُقِّع نيابةً عنه."
-        )}
-      </p>
-    </>
   );
 }

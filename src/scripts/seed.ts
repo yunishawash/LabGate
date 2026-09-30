@@ -36,7 +36,7 @@ const USERS: SeedUser[] = [
   { name: "Sales Coordinator", nameAr: "منسّق المبيعات",  email: "sales.coord@gwmc.com",     role: "sales_coordinator", permissions: ["orders"] },
   { name: "Sales Manager",     nameAr: "مدير المبيعات",   email: "sales.manager@gwmc.com",   role: "sales_manager",     permissions: ["orders", "customers", "reports"] },
   { name: "Finance Manager",   nameAr: "المدير المالي",   email: "finance@gwmc.com",         role: "finance_manager",   permissions: ["orders", "reports"] },
-  { name: "Accounts Officer",  nameAr: "مسؤول الحسابات",  email: "accountant@gwmc.com",      role: "accountant",        permissions: ["orders"] },
+  { name: "Accounts Officer",  nameAr: "المحاسب",         email: "accountant@gwmc.com",      role: "accountant",        permissions: ["orders"] },
   { name: "General Manager",   nameAr: "المدير العام",    email: "gm@gwmc.com",              role: "general_manager",   permissions: ["orders", "customers", "reports", "audit-log"] },
   { name: "Technical Manager", nameAr: "المدير التقني",   email: "tech.manager@gwmc.com",    role: "technical_manager", permissions: ["orders", "lab", "reports"] },
   { name: "Lab Technician",    nameAr: "فني المختبر",     email: "lab.tech@gwmc.com",        role: "lab_technician",    permissions: ["orders", "lab"] },

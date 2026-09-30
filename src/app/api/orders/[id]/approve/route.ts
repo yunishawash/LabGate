@@ -42,6 +42,18 @@ export async function POST(
     return NextResponse.json({ error: "It is not your turn on this order." }, { status: 403 });
   }
 
+  // Collections must write their note before Finance Manager signs — the
+  // note IS the thing being approved, so approving without it would just be
+  // a blank rubber stamp.
+  if (slot.stage.key === "finance_manager_approval") {
+    const collectionsNote = (order as unknown as { collections?: { note?: string } }).collections?.note;
+    if (!collectionsNote || !collectionsNote.trim()) {
+      return badRequest(
+        "The Collections department must enter their note before the Finance Manager can approve."
+      );
+    }
+  }
+
   const body = await readJson(req);
   const noteCheck = strictStr(body?.note, 2000, "Note");
   if (!noteCheck.ok) return badStrictStr(noteCheck);
@@ -50,7 +62,12 @@ export async function POST(
     id,
     slot.stage,
     { _id: userDoc._id, name: userDoc.name },
-    { actedAs: slot.actedAs, actedForRole: slot.actedForRole, note: noteCheck.value }
+    {
+      actedAs: slot.actedAs,
+      actedForRole: slot.actedForRole,
+      actedForName: slot.actedForName,
+      note: noteCheck.value,
+    }
   );
 
   if ("code" in result) {
@@ -76,6 +93,7 @@ export async function POST(
     posted: result.posted,
     actedAs: result.actedAs,
     actedForRole: result.actedForRole,
+    actedForName: result.actedForName,
     // True only on a dual-slot stage where this signature wasn't the last one
     // needed — say so plainly rather than letting the signer wonder why
     // nothing moved. No stage is currently dual, so this is always false today.

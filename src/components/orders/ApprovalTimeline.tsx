@@ -195,12 +195,18 @@ function SignatureLine({
         <span className="text-slate-600">
           {/* A completed step with no name is possible in imported or seeded
               history. Say the stage is done rather than rendering a blank. */}
-          {step!.actedByName || <span className="text-slate-400">{t("Completed", "مكتملة")}</span>}
+          <bdi>{step!.actedByName || <span className="text-slate-400">{t("Completed", "مكتملة")}</span>}</bdi>
           {step!.actedAs && step!.actedAs !== "primary" && (
             <span className="text-amber-700">
               {" · "}
               {t("on behalf of", "بالإنابة عن")}{" "}
-              {ROLE_LABELS[(step!.actedForRole ?? stage.role) as UserRole]?.[lang] ?? step!.actedForRole}
+              {/* Two Latin-script names sandwiching an Arabic connector, inside
+                  an RTL layout — <bdi> keeps the bidi algorithm from swapping
+                  this name and the actor's own name above. */}
+              <bdi>
+                {step!.actedForName ||
+                  (ROLE_LABELS[(step!.actedForRole ?? stage.role) as UserRole]?.[lang] ?? step!.actedForRole)}
+              </bdi>
             </span>
           )}
           {step!.actedAt && (

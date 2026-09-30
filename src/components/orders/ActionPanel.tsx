@@ -28,6 +28,7 @@ export function ActionPanel({
 }: {
   order: OrderRow & {
     customerId?: string;
+    collections?: { note?: string };
     lines: { productId: string; product?: string; productAr?: string; bagWeightKg?: number; bagCount?: number; lineWeightKg: number }[];
     labSamples?: { productId: string }[];
   };
@@ -49,6 +50,12 @@ export function ActionPanel({
   const actingLabel = standIn
     ? ROLE_LABELS[standIn.forRole as UserRole]?.[lang] ?? standIn.forRole
     : "";
+
+  // The Collections note IS the thing being approved here — Finance Manager
+  // cannot sign a blank one. Accountant/finance_manager/admin write it via
+  // CollectionsPackingPanel, independently of this action.
+  const financeNoteMissing =
+    stage?.key === "finance_manager_approval" && !order.collections?.note?.trim();
 
   const approve = async () => {
     setBusy(true);
@@ -158,9 +165,21 @@ export function ActionPanel({
         </div>
       )}
 
+      {financeNoteMissing && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 flex items-start gap-2">
+          <AlertTriangle size={15} className="text-amber-600 mt-0.5 flex-shrink-0" />
+          <p className="text-xs text-amber-800">
+            {t(
+              "Waiting for the Collections department to enter their note before this stage can be approved.",
+              "بانتظار إدخال ملاحظة دائرة التحصيلات قبل إمكانية اعتماد هذه المرحلة."
+            )}
+          </p>
+        </div>
+      )}
+
       {canAct ? (
         <>
-          {p.canApprove && (
+          {p.canApprove && !financeNoteMissing && (
             <div className="space-y-1.5">
               <Label>{t("Note (optional)", "ملاحظة (اختياري)")}</Label>
               <Textarea
@@ -173,7 +192,7 @@ export function ActionPanel({
           )}
 
           <div className="flex flex-col gap-2">
-            {p.canApprove && (
+            {p.canApprove && !financeNoteMissing && (
               <Button className="gap-2 bg-emerald-600 hover:bg-emerald-700" onClick={approve} disabled={busy}>
                 <Check size={16} />
                 {busy

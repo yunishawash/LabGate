@@ -5,6 +5,7 @@ import { containsRegex, dateRange, oid, oneOf } from "@/lib/apiHelpers";
 import { buildWorkbook, workbookToBuffer, xlsxResponse, type SheetDef } from "@/lib/excel";
 import { visibilityFilter, andFilters, SALES_STAGES, type Actor } from "@/lib/salesWorkflow";
 import { liveDelegationRoles } from "@/lib/salesAuth";
+import { multiSelectFilters, lineLabStatuses } from "@/lib/reportHelpers";
 import SalesOrder from "@/models/SalesOrder";
 import LabSample from "@/models/LabSample";
 import LabParameter from "@/models/LabParameter";
@@ -14,7 +15,7 @@ import {
   type LabStatus, type LabDecision, type ILabSampleResult,
 } from "@/types";
 
-const TYPES = ["orders", "pipeline", "cycleTime", "lab"] as const;
+const TYPES = ["orders", "pipeline", "cycleTime", "lab", "ordersDetail"] as const;
 
 const stageName = (i: number | null | undefined, lang: "en" | "ar") => {
   const s = SALES_STAGES.find((x) => x.index === i);
@@ -279,6 +280,72 @@ export async function GET(req: NextRequest) {
     sheets = [
       { name: t("Lab Results", "نتائج المختبر"), headers: resultsHeaders, rows: resultsRows },
       { name: t("Detail", "التفصيل"), headers: detailHeaders, rows: detailRows },
+    ];
+  }
+
+  // One row per order line, the order's own columns (number/customer/dates)
+  // merged down the group of rows its lines occupy — the "Orders" report
+  // tab's own table, exported as it reads on screen.
+  if (type === "ordersDetail") {
+    const { customerFilter, productFilter } = multiSelectFilters(searchParams);
+    const filter = andFilters(visible, range ? { orderDate: range } : {}, customerFilter, productFilter);
+    const orders = await SalesOrder.find(filter)
+      .sort({ orderDate: -1 })
+      .limit(5000)
+      .select("orderNumber customer customerAr orderDate deliveryDate lines labSampleIds")
+      .lean();
+
+    const labByOrder = await lineLabStatuses(orders as unknown as { _id: unknown; labSampleIds?: unknown[] }[]);
+    const isoDate = (d: unknown) => (d ? new Date(d as string).toISOString().slice(0, 10) : "");
+    const statusText = (s: string | undefined) => (s ? LAB_STATUS_LABELS[s as LabStatus]?.[lang] ?? s : "");
+
+    const rows: (string | number | null)[][] = [];
+    const merges: { s: { r: number; c: number }; e: { r: number; c: number } }[] = [];
+
+    for (const o of orders) {
+      const d = o as unknown as Record<string, never>;
+      const labByProduct = labByOrder.get(String(d._id)) ?? new Map<string, string>();
+      const lines = (d.lines ?? []) as unknown as {
+        productId: unknown; product: string; productAr?: string;
+        bagWeightKg: number; bagCount: number; lineWeightKg: number; actualWeightKg: number | null;
+      }[];
+      if (!lines.length) continue;
+
+      const startRow = rows.length;
+      for (const l of lines) {
+        const diffKg = l.actualWeightKg != null ? l.actualWeightKg - l.lineWeightKg : null;
+        rows.push([
+          rows.length === startRow ? (d.orderNumber as string) : "",
+          rows.length === startRow ? ((lang === "ar" && (d.customerAr as string)) || (d.customer as string) || "") : "",
+          rows.length === startRow ? isoDate(d.orderDate) : "",
+          rows.length === startRow ? isoDate(d.deliveryDate) : "",
+          (lang === "ar" && l.productAr) || l.product || "",
+          `${l.bagWeightKg} kg`,
+          l.bagCount,
+          Number((l.lineWeightKg / 1000).toFixed(3)),
+          l.actualWeightKg != null ? Number((l.actualWeightKg / 1000).toFixed(3)) : null,
+          diffKg != null ? Number((diffKg / 1000).toFixed(3)) : null,
+          statusText(labByProduct.get(String(l.productId))),
+        ]);
+      }
+      const endRow = rows.length - 1;
+      if (endRow > startRow) {
+        for (let c = 0; c <= 3; c++) merges.push({ s: { r: startRow, c }, e: { r: endRow, c } });
+      }
+    }
+
+    sheets = [
+      {
+        name: t("Orders", "الطلبيات"),
+        headers: [
+          t("Order", "رقم الطلبية"), t("Customer", "الزبون"), t("Created", "تاريخ الإنشاء"),
+          t("Delivery", "تاريخ التسليم"), t("Product", "الصنف"), t("Bag", "الكيس"),
+          t("Bags", "الأكياس"), t("Weight (t)", "الوزن (طن)"), t("Actual (t)", "الوزن الفعلي (طن)"),
+          t("Difference (t)", "الفرق (طن)"), t("Lab result", "نتيجة المختبر"),
+        ],
+        rows,
+        merges,
+      },
     ];
   }
 

@@ -1,8 +1,10 @@
 import mongoose from "mongoose";
 import SalesOrder from "@/models/SalesOrder";
+import User from "@/models/User";
 import { writeAudit } from "@/lib/audit";
 import { authorityFor, stageComplete, nextStageIndex, stagesAt, type Actor, type OrderLike, type StageDef } from "@/lib/salesWorkflow";
 import { liveDelegationRoles, isRoleUnavailable } from "@/lib/salesAuth";
+import { ROLE_LABELS, type UserRole } from "@/types";
 
 /**
  * Every stage transition, done atomically.
@@ -26,6 +28,7 @@ export interface ClaimResult {
   stage: StageDef;
   actedAs: string;
   actedForRole: string;
+  actedForName: string;
   advancedTo: number | null;
   posted: boolean;
 }
@@ -35,7 +38,9 @@ export async function resolveSlot(
   order: OrderLike,
   actor: Actor,
   wantKind?: StageDef["kind"]
-): Promise<{ stage: StageDef; actedAs: string; actedForRole: string } | TransitionError> {
+): Promise<
+  { stage: StageDef; actedAs: string; actedForRole: string; actedForName: string } | TransitionError
+> {
   if (order.status !== "Pending") return { code: "terminal" };
 
   const delegated = await liveDelegationRoles(actor.id);
@@ -53,13 +58,24 @@ export async function resolveSlot(
     });
     if (!authority) continue;
 
-    return {
-      stage,
-      actedAs: authority.kind,
-      // Recording WHO the signature was made on behalf of is the whole point:
-      // a deputy's mark that looked like the owner's would hollow out the chain.
-      actedForRole: "forRole" in authority ? authority.forRole : stage.role,
-    };
+    // Recording WHO the signature was made on behalf of is the whole point:
+    // a deputy's mark that looked like the owner's would hollow out the chain.
+    const actedForRole = "forRole" in authority ? authority.forRole : stage.role;
+
+    // Standing in for someone — name the actual person that role belongs to
+    // ("بالإنابة عن أحمد محمد"), not just the role's title. A real signature
+    // is never made in a primary's own name, so this only applies to the
+    // other three authorities (delegate/deputy/admin).
+    let actedForName = "";
+    if (authority.kind !== "primary") {
+      const holders = (await User.find({ role: actedForRole, isActive: true })
+        .select("name")
+        .limit(5)
+        .lean()) as { name: string }[];
+      actedForName = holders.map((h) => h.name).filter(Boolean).join("، ");
+    }
+
+    return { stage, actedAs: authority.kind, actedForRole, actedForName };
   }
 
   return { code: "forbidden" };
@@ -78,7 +94,13 @@ export async function claimAndAdvance(
   orderId: string,
   stage: StageDef,
   actor: { _id: mongoose.Types.ObjectId; name: string },
-  meta: { actedAs: string; actedForRole: string; note?: string; extraSet?: Record<string, unknown> }
+  meta: {
+    actedAs: string;
+    actedForRole: string;
+    actedForName?: string;
+    note?: string;
+    extraSet?: Record<string, unknown>;
+  }
 ): Promise<ClaimResult | TransitionError> {
   const now = new Date();
 
@@ -98,6 +120,7 @@ export async function claimAndAdvance(
         "steps.$[s].actedAt": now,
         "steps.$[s].actedAs": meta.actedAs,
         "steps.$[s].actedForRole": meta.actedForRole,
+        "steps.$[s].actedForName": meta.actedForName ?? "",
         "steps.$[s].note": meta.note ?? "",
         ...(meta.extraSet ?? {}),
       },
@@ -159,7 +182,9 @@ export async function claimAndAdvance(
     notes:
       meta.actedAs === "primary" || meta.actedAs === "admin"
         ? meta.note ?? ""
-        : `on behalf of ${meta.actedForRole}${meta.note ? ` — ${meta.note}` : ""}`,
+        : `بالنيابة عن ${
+            meta.actedForName || (ROLE_LABELS[meta.actedForRole as UserRole]?.ar ?? meta.actedForRole)
+          }${meta.note ? ` — ${meta.note}` : ""}`,
   });
 
   return {
@@ -167,6 +192,7 @@ export async function claimAndAdvance(
     stage,
     actedAs: meta.actedAs,
     actedForRole: meta.actedForRole,
+    actedForName: meta.actedForName ?? "",
     advancedTo,
     posted,
   };

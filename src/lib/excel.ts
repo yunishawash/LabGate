@@ -5,6 +5,10 @@ export interface SheetDef {
   /** Column headers, already in the viewer's language. */
   headers: string[];
   rows: (string | number | null)[][];
+  /** Cell ranges to merge (row/col indexes into `rows`, 0-based, header row
+   *  excluded) — e.g. one order's number/customer/dates spanning the several
+   *  rows its product lines occupy. */
+  merges?: { s: { r: number; c: number }; e: { r: number; c: number } }[];
 }
 
 /**
@@ -31,6 +35,14 @@ export function buildWorkbook(sheets: SheetDef[]): XLSX.WorkBook {
       );
       return { wch: Math.min(Math.max(longest + 2, 8), 44) };
     });
+    // `+1` for the header row `aoa_to_sheet` added, which `merges` ranges
+    // (given in terms of `rows` alone) don't know about.
+    if (s.merges?.length) {
+      ws["!merges"] = s.merges.map((m) => ({
+        s: { r: m.s.r + 1, c: m.s.c },
+        e: { r: m.e.r + 1, c: m.e.c },
+      }));
+    }
     XLSX.utils.book_append_sheet(wb, ws, s.name.replace(/[[\]:*?/\\]/g, "").slice(0, 31));
   }
   return wb;

@@ -38,8 +38,21 @@ export async function POST(
   const noteCheck = strictStr(body?.note, 2000, "Note");
   if (!noteCheck.ok) return badStrictStr(noteCheck);
 
-  const order = await SalesOrder.findById(orderId).select("orderNumber").lean();
+  const order = await SalesOrder.findById(orderId).select("orderNumber steps").lean();
   if (!order) return notFound("Order not found");
+
+  // The Collections note IS the thing the Finance Manager approved — letting
+  // it change afterward would mean his signature no longer matches what it
+  // signed off on. Admin keeps the ability to fix a mistake either way.
+  if (kind === "collections" && userDoc.role !== "admin") {
+    const steps = (order as unknown as { steps?: { stageKey: string; status: string }[] }).steps || [];
+    const financeStep = steps.find((s) => s.stageKey === "finance_manager_approval");
+    if (financeStep?.status === "approved" || financeStep?.status === "completed") {
+      return badRequest(
+        "The Finance Manager has already approved this order — the Collections note can no longer be changed."
+      );
+    }
+  }
 
   const now = new Date();
   const update = {

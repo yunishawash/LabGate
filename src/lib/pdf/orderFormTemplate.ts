@@ -1,7 +1,14 @@
 import fs from "fs";
 import path from "path";
 import { SALES_STAGES, type StageDef } from "@/lib/salesWorkflow";
-import { ROLE_LABELS, LAB_STATUS_LABELS, type UserRole, type LabStatus } from "@/types";
+import {
+  ROLE_LABELS,
+  LAB_STATUS_LABELS,
+  LAB_DECISION_LABELS,
+  type UserRole,
+  type LabStatus,
+  type LabDecision,
+} from "@/types";
 
 /** Shape this template actually reads — a lean SalesOrder plus its steps. */
 export interface OrderFormLine {
@@ -17,6 +24,28 @@ export interface OrderFormLine {
   actualWeightKg?: number | null;
 }
 
+/** One parameter reading, shown exactly like the order screen's read-only
+ *  "view readings" dialog — value + status, no limits (those are a Lab-module
+ *  concern; this is "see what was entered"). */
+export interface OrderFormLabResult {
+  parameterId?: string;
+  parameterName: string;
+  unit?: string;
+  value: number;
+  status: "pass" | "warning" | "fail";
+}
+
+export interface OrderFormLabSample {
+  sampleNumber: string;
+  product?: string;
+  sampleDate?: string | Date;
+  testedByName?: string;
+  overallStatus?: "pass" | "warning" | "fail";
+  finalDecision?: "pending" | "accepted" | "rejected";
+  results: OrderFormLabResult[];
+  notes?: string;
+}
+
 export interface OrderFormStep {
   stageKey: string;
   stageIndex?: number;
@@ -25,6 +54,7 @@ export interface OrderFormStep {
   actedAt?: string | Date | null;
   actedAs?: string;
   actedForRole?: string;
+  actedForName?: string;
   note?: string;
 }
 
@@ -167,8 +197,20 @@ function stepByKey(steps: OrderFormStep[] | undefined, key: string): OrderFormSt
 
 function signatureCell(step: OrderFormStep | undefined): string {
   if (!step?.actedByName) return "";
-  const capacity = step.actedAs && step.actedAs !== "primary" ? ` (${esc(step.actedAs)})` : "";
-  return `${esc(step.actedByName)}${capacity}<br/><span style="font-weight:400;font-size:10px;">${fmtDate(step.actedAt)}</span>`;
+  // Always the real signer's own name — "بالنيابة عن" only names WHO he stood
+  // in for (the actual person, when known, not just the role's title), never
+  // a raw internal value like "(delegate)".
+  // Both names are Latin-script inside an RTL paragraph, sandwiching an
+  // Arabic connector — without <bdi> isolation the bidi algorithm swaps their
+  // VISUAL order (confirmed by rendering the actual PDF, not just reasoning
+  // about the markup).
+  const onBehalf =
+    step.actedAs && step.actedAs !== "primary"
+      ? ` بالنيابة عن <bdi>${esc(
+          step.actedForName || (ROLE_LABELS[(step.actedForRole || "") as UserRole]?.ar ?? step.actedForRole)
+        )}</bdi>`
+      : "";
+  return `<bdi>${esc(step.actedByName)}</bdi>${onBehalf}<br/><span style="font-weight:400;font-size:10px;">${fmtDate(step.actedAt)}</span>`;
 }
 
 type ChainState = "done" | "current" | "pending" | "rejected" | "skipped";
@@ -210,12 +252,17 @@ function chainSignatureLine(stage: StageDef, step: OrderFormStep | undefined, in
 
   let body: string;
   if (done) {
+    // Both names are Latin-script inside an RTL paragraph, sandwiching an
+    // Arabic connector — without <bdi> isolation the bidi algorithm swaps
+    // their VISUAL order (confirmed by rendering the actual PDF).
     const capacity =
       step!.actedAs && step!.actedAs !== "primary"
-        ? ` <span class="chain-capacity">· بالإنابة عن ${esc(ROLE_LABELS[(step!.actedForRole || stage.role) as UserRole]?.ar ?? step!.actedForRole)}</span>`
+        ? ` <span class="chain-capacity">· بالإنابة عن <bdi>${esc(
+            step!.actedForName || (ROLE_LABELS[(step!.actedForRole || stage.role) as UserRole]?.ar ?? step!.actedForRole)
+          )}</bdi></span>`
         : "";
     const when = step!.actedAt ? ` <span class="chain-muted">· ${fmtDateTime(step!.actedAt)}</span>` : "";
-    body = `${esc(step!.actedByName) || '<span class="chain-muted">مكتملة</span>'}${capacity}${when}`;
+    body = `<bdi>${esc(step!.actedByName) || '<span class="chain-muted">مكتملة</span>'}</bdi>${capacity}${when}`;
   } else if (step?.status === "skipped") {
     body = '<span class="chain-muted">لم يتم الوصول إليها</span>';
   } else if (step?.status === "rejected") {
@@ -325,14 +372,29 @@ function buildApprovalChainPage(order: OrderFormData): string {
 /** The small header block (logo/title row + serial number) every secondary
  *  page opens with — kept in one place so page 2+ never drift from page 1's
  *  own hand-written header. */
-function pageHeadHtml(titleEn: string, titleAr: string, orderNumber: string, badge?: string): string {
+function pageHeadHtml(
+  titleEn: string,
+  titleAr: string,
+  orderNumber: string,
+  badge?: string,
+  pageNum?: number
+): string {
+  // A Western digit glued onto a title swallows a literal space before it
+  // (the bidi algorithm reorders the digit run against that neutral space).
+  // A digit-only <bdi> always resolves "ltr" (no strong char inside to pick
+  // "rtl"), so the two titles need opposite physical margins: the English
+  // title's number trails on the left, the Arabic title's number trails on
+  // the right (the line itself still reads right-to-left, so the digit sits
+  // at its far-left end, touching the Arabic text on its right).
+  const numSuffixEn = pageNum != null ? `<bdi class="title-page-num-en">${pageNum}</bdi>` : "";
+  const numSuffixAr = pageNum != null ? `<bdi class="title-page-num-ar">${pageNum}</bdi>` : "";
   return `
     <table class="header-table">
       <tr>
         <td class="header-company"><div class="company-name">Golden Wheat Mills</div></td>
         <td class="header-title">
-          <div class="sales-order">${esc(titleEn)}</div>
-          <div class="sales-order-ar">${esc(titleAr)}</div>
+          <div class="sales-order">${esc(titleEn)}${numSuffixEn}</div>
+          <div class="sales-order-ar">${esc(titleAr)}${numSuffixAr}</div>
         </td>
         <td class="header-logo"></td>
       </tr>
@@ -366,12 +428,23 @@ const ACTION_LABELS_AR: Record<string, string> = {
   stage_rejected: "رفض الطلبية",
   lab_attached: "إرفاق نتائج المختبر",
   weighed_posted: "الوزن والترحيل",
+  collections_note: "تحديث الملاحظة",
+  packing_note: "تحديث الملاحظة",
+};
+
+/** `field` is usually a stage key, but the Collections/Packing annotations
+ *  (not a chain stage) stamp their own kind here instead — cover both rather
+ *  than leaking the raw internal string onto a printed page. */
+const FIELD_LABELS_AR: Record<string, string> = {
+  collections: "دائرة التحصيلات",
+  packing: "قسم التعبئة",
 };
 
 function historyStageLabel(field: string | undefined): string {
   if (!field) return "";
   const stage = SALES_STAGES.find((s) => s.key === field);
-  return stage ? stage.ar : field;
+  if (stage) return stage.ar;
+  return FIELD_LABELS_AR[field] ?? field;
 }
 
 function historyItemHtml(e: OrderFormHistoryEntry): string {
@@ -443,17 +516,130 @@ function buildHistoryPages(
     .join("\n");
 }
 
+const LAB_RESULT_BADGE_CLASS: Record<string, string> = {
+  pass: "lab-badge-pass",
+  warning: "lab-badge-warning",
+  fail: "lab-badge-fail",
+};
+
+const LAB_DECISION_BADGE_CLASS: Record<string, string> = {
+  accepted: "lab-badge-accepted",
+  rejected: "lab-badge-rejected",
+  pending: "lab-badge-pending",
+};
+
+/** One sample block — sample number, product, date, tested-by, overall
+ *  status/sign-off, then the same value+status rows the order screen's
+ *  read-only "view readings" dialog shows (no limits — that's a Lab-module
+ *  concern). */
+function labSampleItemHtml(s: OrderFormLabSample): string {
+  const status = (s.overallStatus && s.overallStatus in LAB_STATUS_LABELS ? s.overallStatus : "pass") as LabStatus;
+  const decision = s.finalDecision && s.finalDecision !== "pending" ? (s.finalDecision as LabDecision) : null;
+
+  const rows = s.results
+    .map((r) => {
+      const rStatus = (r.status in LAB_STATUS_LABELS ? r.status : "pass") as LabStatus;
+      return `
+      <tr>
+        <td class="col-param">${esc(r.parameterName)}${r.unit ? ` <span class="chain-muted">(${esc(r.unit)})</span>` : ""}</td>
+        <td class="col-value">${esc(r.value)}</td>
+        <td class="col-status"><span class="lab-badge ${LAB_RESULT_BADGE_CLASS[rStatus]}">${esc(LAB_STATUS_LABELS[rStatus].ar)}</span></td>
+      </tr>`;
+    })
+    .join("\n");
+
+  return `
+    <div class="lab-item">
+      <div class="lab-head">
+        <span class="lab-sample-no">${esc(s.sampleNumber)}</span>
+        ${s.product ? `<span class="lab-product">${esc(s.product)}</span>` : ""}
+        <span class="lab-badges">
+          <span class="lab-badge ${LAB_RESULT_BADGE_CLASS[status]}">${esc(LAB_STATUS_LABELS[status].ar)}</span>
+          ${decision ? `<span class="lab-badge ${LAB_DECISION_BADGE_CLASS[decision]}">${esc(LAB_DECISION_LABELS[decision].ar)}</span>` : ""}
+        </span>
+      </div>
+      <div class="lab-meta">
+        ${fmtDate(s.sampleDate)}${s.testedByName ? ` <span class="chain-muted">· ${esc(s.testedByName)}</span>` : ""}
+      </div>
+      <table class="lab-table">
+        <thead>
+          <tr><th class="col-param">المعيار</th><th class="col-value">القيمة</th><th class="col-status">الحالة</th></tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+      ${s.notes ? `<div class="lab-notes">${esc(s.notes)}</div>` : ""}
+    </div>`;
+}
+
+/** Rough printed height of one sample block, in mm — same purpose as
+ *  estimateHistoryHeightMm: keep pagination inside the physical A4 sheet. */
+function estimateLabSampleHeightMm(s: OrderFormLabSample): number {
+  const notesLines = s.notes ? Math.max(1, Math.ceil(s.notes.length / 85)) : 0;
+  return 18 + s.results.length * 5.5 + notesLines * 4.2;
+}
+
+function paginateLabSamples(samples: OrderFormLabSample[]): OrderFormLabSample[][] {
+  const pages: OrderFormLabSample[][] = [];
+  let current: OrderFormLabSample[] = [];
+  let used = 0;
+  for (const s of samples) {
+    const h = estimateLabSampleHeightMm(s);
+    if (current.length && used + h > HISTORY_PAGE_BUDGET_MM) {
+      pages.push(current);
+      current = [];
+      used = 0;
+    }
+    current.push(s);
+    used += h;
+  }
+  if (current.length) pages.push(current);
+  return pages;
+}
+
+/** One page per chunk, laid out exactly like buildHistoryPages — the printed
+ *  analog of the order screen's per-line "view readings" dialog, but for
+ *  every sample attached to the order at once. */
+function buildLabResultsPages(
+  order: OrderFormData,
+  chunks: OrderFormLabSample[][],
+  docPageStart: number,
+  docPageTotal: number
+): string {
+  return chunks
+    .map((chunk, i) => `
+<div class="page page-break">
+  <div class="section">
+    ${pageHeadHtml("Lab Results", "نتائج المختبر", order.orderNumber, undefined, i + 1)}
+
+    <div class="lab-list">
+      ${chunk.map(labSampleItemHtml).join("\n")}
+    </div>
+  </div>
+
+  ${footerHtml(docPageStart + i, docPageTotal)}
+</div>`)
+    .join("\n");
+}
+
 /**
  * Builds the MS-SC/F7 printable HTML. Every field tolerates `undefined` —
  * orders created before these fields existed print blank ruled lines, not a
  * crash, since the form's whole job is to still work with a pen.
  */
-export function buildOrderFormHtml(order: OrderFormData, history: OrderFormHistoryEntry[] = []): string {
+export function buildOrderFormHtml(
+  order: OrderFormData,
+  history: OrderFormHistoryEntry[] = [],
+  labSamples: OrderFormLabSample[] = []
+): string {
   const salesManagerStep = stepByKey(order.steps, "sales_manager_approval");
   const gmStep = stepByKey(order.steps, "general_manager_approval");
+  const financeManagerStep = stepByKey(order.steps, "finance_manager_approval");
 
+  const labChunks = paginateLabSamples(labSamples);
   const historyChunks = paginateHistory(history);
-  const totalPages = 2 + historyChunks.length;
+  const totalPages = 2 + labChunks.length + historyChunks.length;
 
   const logo = logoDataUri();
   const logoCell = logo
@@ -496,6 +682,8 @@ td, th { border: 1px solid #000; padding: 4px 6px; }
 .company-name-fallback { font-size: 16px; font-weight: 700; }
 .sales-order { font-size: 22px; font-weight: bold; direction: ltr; line-height: 1.25; }
 .sales-order-ar { font-size: 20px; font-weight: bold; margin-top: 3px; }
+.title-page-num-en { margin-left: 6px; }
+.title-page-num-ar { margin-right: 6px; }
 .company-name { font-size: 18px; font-weight: bold; }
 
 .serial-row { height: 9mm; display: flex; align-items: center; font-size: 13px; font-weight: bold; }
@@ -572,10 +760,32 @@ td, th { border: 1px solid #000; padding: 4px 6px; }
 .hist-by { font-size: 11px; color: #475569; margin-top: 2px; }
 .hist-note { font-size: 11px; color: #334155; white-space: pre-wrap; margin-top: 2px; }
 
+.lab-list { margin-top: 4mm; }
+.lab-item { border: 1px solid #000; border-radius: 4px; padding: 6px 10px; margin-bottom: 5px; }
+.lab-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lab-sample-no { font-weight: bold; font-size: 13px; font-family: monospace; }
+.lab-product { font-size: 12px; color: #334155; }
+.lab-badges { margin-inline-start: auto; display: flex; align-items: center; gap: 6px; }
+.lab-badge { font-size: 10px; font-weight: bold; padding: 2px 8px; border-radius: 9px; white-space: nowrap; }
+.lab-badge-pass { background: #d1fae5; color: #065f46; }
+.lab-badge-warning { background: #fef3c7; color: #92400e; }
+.lab-badge-fail { background: #fee2e2; color: #991b1b; }
+.lab-badge-accepted { background: #d1fae5; color: #065f46; }
+.lab-badge-rejected { background: #fee2e2; color: #991b1b; }
+.lab-badge-pending { background: #f1f5f9; color: #64748b; }
+.lab-meta { font-size: 11px; color: #64748b; margin-top: 2px; }
+.lab-table { margin-top: 5px; table-layout: fixed; }
+.lab-table th { background: #f8f8f8; font-size: 10px; text-align: center; height: 6mm; }
+.lab-table td { font-size: 11px; padding: 2px 6px; text-align: center; height: 5.5mm; }
+.lab-table .col-param { width: 46%; text-align: right; }
+.lab-table .col-value { width: 24%; }
+.lab-table .col-status { width: 30%; }
+.lab-notes { font-size: 11px; color: #334155; white-space: pre-wrap; margin-top: 4px; }
+
 /* Fidelity between the Chrome print preview and the Playwright/Puppeteer
    page.pdf() path: both rasterize @page + these rules identically as long
    as nothing depends on viewport size or animation. */
-tr, td, th, table, .notes-table, .approval-table, .header-table, .items-table, .chain-item, .hist-item { break-inside: avoid; page-break-inside: avoid; }
+tr, td, th, table, .notes-table, .approval-table, .header-table, .items-table, .chain-item, .hist-item, .lab-item { break-inside: avoid; page-break-inside: avoid; }
 .page { page-break-after: avoid; }
 .page-break { page-break-before: always; }
 </style>
@@ -664,7 +874,11 @@ tr, td, th, table, .notes-table, .approval-table, .header-table, .items-table, .
         <div class="note-body">${esc(order.collections?.note || "")}</div>
         <div class="signature-inline">
           <span class="bold">توقيع المدير المالي:</span>
-          <span class="dotted-line"></span>
+          ${
+            financeManagerStep?.status === "approved" || financeManagerStep?.status === "completed"
+              ? `<span>${signatureCell(financeManagerStep)}</span>`
+              : `<span class="dotted-line"></span>`
+          }
         </div>
       </td>
       <td>
@@ -696,7 +910,9 @@ tr, td, th, table, .notes-table, .approval-table, .header-table, .items-table, .
   ${footerHtml(2, totalPages)}
 </div>
 
-${buildHistoryPages(order, historyChunks, 3, totalPages)}
+${buildLabResultsPages(order, labChunks, 3, totalPages)}
+
+${buildHistoryPages(order, historyChunks, 3 + labChunks.length, totalPages)}
 
 </body>
 </html>`;

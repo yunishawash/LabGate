@@ -60,6 +60,16 @@ const ACTION_LABELS: Record<string, { en: string; ar: string }> = {
   stage_rejected: { en: "Order rejected", ar: "رفض الطلبية" },
   lab_attached: { en: "Lab results attached", ar: "إرفاق نتائج المختبر" },
   weighed_posted: { en: "Weighed and posted", ar: "الوزن والترحيل" },
+  collections_note: { en: "Note updated", ar: "تحديث الملاحظة" },
+  packing_note: { en: "Note updated", ar: "تحديث الملاحظة" },
+};
+
+/** `field` is usually a stage key, but the Collections/Packing annotations
+ *  (not a chain stage) stamp their own kind here instead — cover both rather
+ *  than leaking the raw internal string onto the screen. */
+const FIELD_LABELS: Record<string, { en: string; ar: string }> = {
+  collections: { en: "Collections dept.", ar: "دائرة التحصيلات" },
+  packing: { en: "Packing dept.", ar: "قسم التعبئة" },
 };
 
 export default function OrderDetailPage() {
@@ -576,8 +586,8 @@ function LinesTable({
 
 function stageLabel(field: string, lang: "en" | "ar"): string {
   const stage = SALES_STAGES.find((s) => s.key === field);
-  if (!stage) return field;
-  return lang === "ar" ? stage.ar : stage.en;
+  if (stage) return lang === "ar" ? stage.ar : stage.en;
+  return FIELD_LABELS[field]?.[lang] ?? field;
 }
 
 function HistoryList({

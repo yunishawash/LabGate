@@ -101,6 +101,7 @@ export async function POST(
     {
       actedAs: slot.actedAs,
       actedForRole: slot.actedForRole,
+      actedForName: slot.actedForName,
       note: noteCheck.value,
       extraSet: {
         lines: weighedLines,

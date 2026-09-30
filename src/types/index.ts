@@ -36,7 +36,7 @@ export const ROLE_LABELS: Record<UserRole, { en: string; ar: string }> = {
   sales_coordinator: { en: "Sales Coordinator", ar: "منسّق المبيعات" },
   sales_manager:     { en: "Sales Manager",     ar: "مدير المبيعات" },
   finance_manager:   { en: "Finance Manager",   ar: "المدير المالي" },
-  accountant:        { en: "Accounts Officer",  ar: "مسؤول الحسابات" },
+  accountant:        { en: "Accounts Officer",  ar: "المحاسب" },
   general_manager:   { en: "General Manager",   ar: "المدير العام" },
   technical_manager: { en: "Technical Manager", ar: "المدير التقني" },
   lab_technician:    { en: "Lab Technician",    ar: "فني المختبر" },

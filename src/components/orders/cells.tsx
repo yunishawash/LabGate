@@ -27,7 +27,8 @@ export interface OrderRow {
   rejection?: { reason?: string; byName?: string; stageIndex?: number | null };
   steps: {
     stageKey: string; stageIndex: number; role: string; kind: string; status: string;
-    actedByName?: string; actedAt?: string | null; actedAs?: string; actedForRole?: string; note?: string;
+    actedByName?: string; actedAt?: string | null; actedAs?: string; actedForRole?: string;
+    actedForName?: string; note?: string;
   }[];
   permissions?: { actingAs?: { kind: string; forRole: string } | null; stalled?: { stageKey: string; role: string } | null };
 }
@@ -144,11 +145,14 @@ export function CurrentStageCell({ order }: { order: OrderRow }) {
             {/* Stage 1 is a creation, not an approval — saying "approved by" on a
                 brand-new order claims a signature that nobody gave. */}
             {last.kind === "create" ? t("Raised by", "أنشأها") : t("Approved by", "اعتمدها")}{" "}
-            {last.actedByName}
+            <bdi>{last.actedByName}</bdi>
             {last.actedAs && last.actedAs !== "primary" && last.actedAs !== "admin" && (
               <span className="text-amber-700">
                 {" "}({t("on behalf of", "بالإنابة عن")}{" "}
-                {ROLE_LABELS[last.actedForRole as UserRole]?.[lang] ?? last.actedForRole})
+                {/* Two Latin-script names sandwiching an Arabic connector, in an
+                    RTL layout — <bdi> stops the bidi algorithm from swapping
+                    this name and actedByName above. */}
+                <bdi>{last.actedForName || (ROLE_LABELS[last.actedForRole as UserRole]?.[lang] ?? last.actedForRole)}</bdi>)
               </span>
             )}
           </span>

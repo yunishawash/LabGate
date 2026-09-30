@@ -3,14 +3,14 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle, ArrowRight, ArrowLeft, Clock, FlaskConical, Inbox, PackageCheck,
-  Scale, UserCheck, TrendingUp, TrendingDown, Minus,
+  Scale, UserCheck, TrendingUp, TrendingDown, Minus, ListChecks, CheckCircle2, XCircle,
 } from "lucide-react";
 import { useLang } from "@/components/layout/AppShell";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { QcStatusBadge } from "@/components/ui/qc-status-badge";
 import { formatDate, formatDuration } from "@/lib/utils";
 import { useNow } from "@/lib/useNow";
 import { agingTone } from "@/components/orders/cells";
-import { LATE_HOURS, LATE_MS } from "@/lib/aging";
 import { SALES_STAGES } from "@/lib/salesWorkflow";
 import { ROLE_LABELS, type UserRole } from "@/types";
 
@@ -133,6 +133,194 @@ function OrderLine({
   );
 }
 
+// ── Top stats row — the CMMS-style KPI strip ────────────────────────────────
+const STAT_TONE = {
+  red:   { border: "border-t-red-400",     iconBg: "bg-red-100 text-red-600" },
+  amber: { border: "border-t-amber-400",   iconBg: "bg-amber-100 text-amber-600" },
+  green: { border: "border-t-emerald-400", iconBg: "bg-emerald-100 text-emerald-600" },
+  blue:  { border: "border-t-sky-400",     iconBg: "bg-sky-100 text-sky-600" },
+} as const;
+
+function StatTile({
+  title, value, icon, tone, onClick,
+}: {
+  title: string; value: React.ReactNode; icon: React.ReactNode; tone: keyof typeof STAT_TONE;
+  /** Present only on the one tile (overdue orders) that has somewhere to go. */
+  onClick?: () => void;
+}) {
+  const cls = STAT_TONE[tone];
+  const Tag = onClick ? "button" : "div";
+  return (
+    <Tag
+      type={onClick ? "button" : undefined}
+      onClick={onClick}
+      className={
+        `w-full text-start rounded-xl border border-slate-200 border-t-4 ${cls.border} bg-white shadow-sm px-4 py-3.5 flex items-start justify-between gap-3 ` +
+        (onClick ? "cursor-pointer hover:bg-slate-50 transition-colors" : "")
+      }
+    >
+      <div className="min-w-0">
+        <p className="text-sm text-slate-500 truncate">{title}</p>
+        <bdi className="block text-2xl font-bold text-slate-900 mt-1 tabular-nums">{value}</bdi>
+      </div>
+      <span className={`w-10 h-10 rounded-lg grid place-items-center flex-shrink-0 ${cls.iconBg}`}>{icon}</span>
+    </Tag>
+  );
+}
+
+/**
+ * A quick-glance KPI strip above everything else, same idea as the CMMS
+ * dashboard's own top row. Every number here is already computed elsewhere
+ * on this same payload (`inChain`, `stuck`, `thisMonth`) — this is a second
+ * READ of that data, not a second fetch. Tiles appear only when their
+ * underlying block is in this role's list (`ROLE_BLOCKS`), so a role without
+ * `thisMonth` simply gets a shorter row instead of a broken tile; `inChain`
+ * is the one number every role always has, so the row is never empty for
+ * anyone still in the chain.
+ *
+ * The overdue tile is clickable — it's the one place that number now lives
+ * (the dashboard used to also show a dedicated "Overdue orders" card with the
+ * same click-through; that card was dropped and this tile absorbed its
+ * dialog, rather than the number existing in two places doing two different
+ * things).
+ */
+const OVERDUE_PAGE_SIZE = 8;
+
+export function StatsRow({
+  inChain, stuck, thisMonth,
+}: {
+  inChain: number;
+  stuck?: { rows: OrderLite[]; total: number; hours: number };
+  thisMonth?: { current: { postedCount: number; rejectedCount: number } };
+}) {
+  const { lang, t } = useLang();
+  const router = useRouter();
+  const now = useNow();
+  const [overdueOpen, setOverdueOpen] = useState(false);
+  const [overduePage, setOverduePage] = useState(0);
+  const overduePageCount = stuck ? Math.max(1, Math.ceil(stuck.rows.length / OVERDUE_PAGE_SIZE)) : 1;
+  const overdueShown = stuck
+    ? stuck.rows.slice(overduePage * OVERDUE_PAGE_SIZE, (overduePage + 1) * OVERDUE_PAGE_SIZE)
+    : [];
+
+  const tiles: { key: string; title: string; value: number; icon: React.ReactNode; tone: keyof typeof STAT_TONE; onClick?: () => void }[] = [
+    {
+      key: "inChain", title: t("In pipeline", "قيد التنفيذ"), value: inChain,
+      icon: <ListChecks size={18} />, tone: "blue",
+    },
+  ];
+  if (stuck) {
+    tiles.unshift({
+      key: "stuck", title: t("Overdue orders", "الطلبيات المتأخرة"), value: stuck.total,
+      icon: <AlertTriangle size={18} />, tone: "red",
+      onClick: stuck.total ? () => { setOverduePage(0); setOverdueOpen(true); } : undefined,
+    });
+  }
+  if (thisMonth) {
+    tiles.push(
+      {
+        key: "posted", title: t("Posted this month", "مرحّلة هذا الشهر"), value: thisMonth.current.postedCount,
+        icon: <CheckCircle2 size={18} />, tone: "green",
+      },
+      {
+        key: "rejected", title: t("Rejected this month", "مرفوضة هذا الشهر"), value: thisMonth.current.rejectedCount,
+        icon: <XCircle size={18} />, tone: "amber",
+      }
+    );
+  }
+
+  return (
+    <>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {tiles.map((s) => (
+          <StatTile key={s.key} title={s.title} value={s.value} icon={s.icon} tone={s.tone} onClick={s.onClick} />
+        ))}
+      </div>
+
+      {stuck && (
+        <Dialog open={overdueOpen} onOpenChange={setOverdueOpen}>
+          <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <AlertTriangle size={16} className="text-amber-600" />
+                {t("Overdue orders", "الطلبيات المتأخرة")}
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-slate-500 border-b border-slate-200">
+                    <th className="text-start font-medium py-2">{t("Order", "الطلبية")}</th>
+                    <th className="text-start font-medium py-2">{t("Customer", "الزبون")}</th>
+                    <th className="text-end font-medium py-2 px-2">{t("Weight", "الوزن")}</th>
+                    <th className="text-start font-medium py-2 px-2 hidden sm:table-cell">{t("Stage", "المرحلة")}</th>
+                    <th className="text-start font-medium py-2 px-2 hidden sm:table-cell">{t("Responsible", "المسؤول")}</th>
+                    <th className="text-end font-medium py-2">{t("Waiting", "منتظرة منذ")}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {overdueShown.map((o) => {
+                    const waited = now && o.currentStageEnteredAt
+                      ? formatDuration(now - new Date(o.currentStageEnteredAt).getTime(), lang)
+                      : "";
+                    const tone = now && o.currentStageEnteredAt ? agingTone(o.currentStageEnteredAt, now) : "calm";
+                    const toneClass = { calm: "text-slate-500", warn: "text-amber-600", late: "text-red-600 font-medium" }[tone];
+                    return (
+                      <tr
+                        key={o._id}
+                        onClick={() => router.push(`/orders/${o._id}`)}
+                        className="cursor-pointer hover:bg-slate-50"
+                      >
+                        <td className="py-2"><bdi className="font-mono text-xs text-sky-700 whitespace-nowrap">{o.orderNumber}</bdi></td>
+                        <td className="py-2 text-slate-700 max-w-32 truncate">
+                          {((lang === "ar" && o.customerAr) || o.customer) || "—"}
+                        </td>
+                        <td className="py-2 px-2 text-end"><bdi className="tabular-nums text-slate-600 whitespace-nowrap">{tons(o.totalWeightKg, t)}</bdi></td>
+                        <td className="py-2 px-2 text-slate-600 whitespace-nowrap hidden sm:table-cell">
+                          {o.currentStageIndex}. {stageName(o.currentStageIndex, lang)}
+                        </td>
+                        <td className="py-2 px-2 text-slate-600 whitespace-nowrap hidden sm:table-cell">
+                          {ROLE_LABELS[(SALES_STAGES.find((s) => s.index === o.currentStageIndex)?.role ?? "") as UserRole]?.[lang] ?? ""}
+                        </td>
+                        <td className={`py-2 text-end whitespace-nowrap ${toneClass}`}><bdi>{waited}</bdi></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {overduePageCount > 1 && (
+              <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                <button
+                  onClick={() => setOverduePage((p) => Math.max(0, p - 1))}
+                  disabled={overduePage === 0}
+                  className="w-7 h-7 grid place-items-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {lang === "ar" ? <ArrowRight size={14} /> : <ArrowLeft size={14} />}
+                </button>
+                <span className="text-xs text-slate-400 tabular-nums">
+                  {t(`Page ${overduePage + 1} of ${overduePageCount}`, `صفحة ${overduePage + 1} من ${overduePageCount}`)}
+                </span>
+                <button
+                  onClick={() => setOverduePage((p) => Math.min(overduePageCount - 1, p + 1))}
+                  disabled={overduePage >= overduePageCount - 1}
+                  className="w-7 h-7 grid place-items-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {lang === "ar" ? <ArrowLeft size={14} /> : <ArrowRight size={14} />}
+                </button>
+              </div>
+            )}
+
+            <More n={stuck.total - stuck.rows.length} href="/orders" t={t} />
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
+  );
+}
+
 // ── A · Waiting on me ──────────────────────────────────────────────────────
 export function WaitingOnMe({
   data, inChain,
@@ -198,142 +386,6 @@ export function MyOrders({ data }: { data: { live: OrderLite[]; rejected: OrderL
   );
 }
 
-// ── C · Pipeline board ─────────────────────────────────────────────────────
-export function Pipeline({
-  data,
-}: { data: { index: number; count: number; kg: number; oldest: string | null }[] }) {
-  const { lang, t } = useLang();
-  const router = useRouter();
-  const now = useNow();
-  const peak = Math.max(1, ...data.map((d) => d.count));
-
-  return (
-    <Card title={t("The whole chain", "السلسلة كاملة")} icon={<ArrowRight size={16} className="text-slate-500 rtl:rotate-180" />}>
-      {/* Plain HTML bars, not a chart library. Recharts' category axis does not
-          reserve its gutter when mirrored, so Arabic labels drew over the bars;
-          this mirrors natively and renders Arabic in the page font. */}
-      <div className="space-y-1.5">
-        {data.map((d) => {
-          const late = d.oldest && now ? now - new Date(d.oldest).getTime() > LATE_MS : false;
-          return (
-            <button
-              key={d.index}
-              disabled={d.count === 0}
-              onClick={() => router.push(`/orders?stage=${d.index}`)}
-              className={
-                "w-full flex items-center gap-2 text-start rounded-lg px-1.5 py-1 " +
-                (d.count === 0 ? "cursor-default" : "cursor-pointer hover:bg-slate-50")
-              }
-            >
-              <span className="font-mono text-[10px] text-slate-400 w-3">{d.index}</span>
-              <span className={"text-xs w-32 truncate " + (d.count ? "text-slate-700" : "text-slate-300")}>
-                {stageName(d.index, lang)}
-              </span>
-              <span className="flex-1 h-4 bg-slate-100 rounded-sm overflow-hidden min-w-8">
-                <span
-                  className={"block h-full rounded-sm " + (late ? "bg-red-500" : "bg-sky-500")}
-                  style={{ width: `${(d.count / peak) * 100}%` }}
-                />
-              </span>
-              <bdi className={"text-xs tabular-nums w-6 text-end " + (d.count ? "text-slate-900 font-medium" : "text-slate-300")}>
-                {d.count}
-              </bdi>
-              <bdi className="text-[11px] tabular-nums text-slate-400 w-20 text-end hidden sm:block">
-                {d.count ? tons(d.kg, t) : ""}
-              </bdi>
-            </button>
-          );
-        })}
-      </div>
-      <p className="text-xs text-slate-400 mt-2">
-        {t(
-          `Red means something there has waited over ${LATE_HOURS} hours.`,
-          `الأحمر يعني أنّ شيئاً هناك انتظر أكثر من ${LATE_HOURS} ساعة.`
-        )}
-      </p>
-    </Card>
-  );
-}
-
-// ── D · Overdue orders ──────────────────────────────────────────────────────
-const STUCK_PAGE_SIZE = 5;
-
-/**
- * A real paginated list, not a full-width banner — it lives as one column in
- * a fixed three-up row (with Pipeline and Volume trend), so it always renders
- * something in that slot rather than disappearing when nothing is overdue.
- * Pagination is client-side over the rows the API already fetched (capped
- * server-side — see `dashboard/route.ts`); a residual note covers the rare
- * case where the true total exceeds that cap.
- */
-export function Stuck({ data }: { data: { rows: OrderLite[]; total: number; hours: number } }) {
-  const { lang, t } = useLang();
-  const [page, setPage] = useState(0);
-
-  const pageCount = Math.max(1, Math.ceil(data.rows.length / STUCK_PAGE_SIZE));
-  const shown = data.rows.slice(page * STUCK_PAGE_SIZE, (page + 1) * STUCK_PAGE_SIZE);
-  const days = data.hours / 24;
-
-  return (
-    <Card
-      title={t("Overdue orders", "الطلبيات المتأخرة")}
-      icon={<AlertTriangle size={16} className="text-amber-600" />}
-    >
-      {!data.total ? (
-        <Empty>
-          {t(
-            `Nothing has waited more than ${days} day(s).`,
-            `لا توجد طلبية انتظرت أكثر من ${days} يوم.`
-          )}
-        </Empty>
-      ) : (
-        <>
-          <p className="text-xs text-slate-500 mb-2">
-            {t(
-              `${data.total} order(s) waiting more than ${days} day(s)`,
-              `${data.total} طلبية منتظرة منذ أكثر من ${days} يوم`
-            )}
-          </p>
-          <div className="divide-y divide-slate-100">
-            {shown.map((o) => (
-              <div key={o._id} className="py-1.5">
-                <OrderLine o={o} />
-                <p className="text-xs text-amber-800 px-2">
-                  {t("On", "عند")}{" "}
-                  {ROLE_LABELS[(SALES_STAGES.find((s) => s.index === o.currentStageIndex)?.role ?? "") as UserRole]?.[lang] ?? ""}
-                </p>
-              </div>
-            ))}
-          </div>
-
-          {pageCount > 1 && (
-            <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100">
-              <button
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
-                disabled={page === 0}
-                className="w-7 h-7 grid place-items-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-              >
-                {lang === "ar" ? <ArrowRight size={14} /> : <ArrowLeft size={14} />}
-              </button>
-              <span className="text-xs text-slate-400 tabular-nums">
-                {t(`Page ${page + 1} of ${pageCount}`, `صفحة ${page + 1} من ${pageCount}`)}
-              </span>
-              <button
-                onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
-                disabled={page >= pageCount - 1}
-                className="w-7 h-7 grid place-items-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-              >
-                {lang === "ar" ? <ArrowLeft size={14} /> : <ArrowRight size={14} />}
-              </button>
-            </div>
-          )}
-
-          <More n={data.total - data.rows.length} href="/orders" t={t} />
-        </>
-      )}
-    </Card>
-  );
-}
 
 // ── E · This month ─────────────────────────────────────────────────────────
 interface Period {

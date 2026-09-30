@@ -6,8 +6,8 @@ import { useLang } from "@/components/layout/AppShell";
 import { ROLE_LABELS, type UserRole } from "@/types";
 import type { BlockKey } from "@/lib/dashboardBlocks";
 import {
-  WaitingOnMe, MyOrders, Pipeline, Stuck, ThisMonth, ThisMonthCompact,
-  LabQueue, Quality, ReadyToWeigh, Coverage,
+  WaitingOnMe, MyOrders, ThisMonth, ThisMonthCompact,
+  LabQueue, Quality, ReadyToWeigh, Coverage, StatsRow,
 } from "@/components/dashboard/blocks";
 import { VolumeTrend, QualityTrend, ProductMix } from "@/components/dashboard/charts";
 import { DashboardFilterBar, EMPTY_FILTERS, type DashboardFilters } from "@/components/dashboard/FilterBar";
@@ -20,7 +20,7 @@ interface Payload {
 }
 
 /** Blocks that span the full width; the rest sit in a two-column grid. */
-const WIDE: BlockKey[] = ["stuck", "thisMonth", "coverage"];
+const WIDE: BlockKey[] = ["thisMonth", "coverage"];
 
 /**
  * The year-long trend charts get their own zone, below the day-to-day
@@ -30,16 +30,13 @@ const WIDE: BlockKey[] = ["stuck", "thisMonth", "coverage"];
 const ANALYTICS: BlockKey[] = ["volumeTrend", "qualityTrend", "productMix"];
 
 /**
- * Two fixed three-up rows, used only when a role's block list has every
- * member of the row — a role missing one of them (e.g. no `pipeline`) falls
- * through to the generic wide/narrow/analytics layout below instead of a
- * lopsided row. Overdue orders + the whole chain + volume both answer "what's
- * moving right now", so they share a row at equal thirds; quality-over-time
- * and product-mix are given equal (40%) room since both are charts, with this
- * month's four numbers stacked in the remaining 20% rather than repeating the
- * full 4-up `ThisMonth` grid at an unreadable width.
+ * `ROW1` is a row of one now: overdue orders moved into `StatsRow` above
+ * (with its own click-through to the list), and the whole-chain pipeline
+ * board was dropped outright rather than relocated — neither is computed by
+ * the API for any role any more. Volume & rejection rate keeps the same slot
+ * they used to share, just without the two cards that used to flank it.
  */
-const ROW1: BlockKey[] = ["stuck", "pipeline", "volumeTrend"];
+const ROW1: BlockKey[] = ["volumeTrend"];
 const ROW2: BlockKey[] = ["qualityTrend", "productMix", "thisMonth"];
 
 export default function DashboardPage() {
@@ -84,8 +81,6 @@ export default function DashboardPage() {
     switch (key) {
       case "waitingOnMe":  return <WaitingOnMe data={d[key]} inChain={payload!.inChain} />;
       case "myOrders":     return <MyOrders data={d[key]} />;
-      case "pipeline":     return <Pipeline data={d[key]} />;
-      case "stuck":        return <Stuck data={d[key]} />;
       case "thisMonth":    return <ThisMonth data={d[key]} />;
       case "labQueue":     return <LabQueue data={d[key]} />;
       case "quality":      return <Quality data={d[key]} />;
@@ -132,21 +127,25 @@ export default function DashboardPage() {
         </p>
       )}
 
+      {/* The quick-glance KPI strip, same idea as the CMMS dashboard's own
+          top row — every number here already exists elsewhere on this same
+          payload, this just surfaces it before anything else on the page. */}
+      {payload && (
+        <StatsRow
+          inChain={payload.inChain}
+          stuck={(payload.data as Record<string, never>).stuck}
+          thisMonth={(payload.data as Record<string, never>).thisMonth}
+        />
+      )}
+
       {/* Scopes every chart/widget below it. The "waiting on you" queues
-          above (and the wide `stuck` fallback / narrow grid, when a role
-          lacks the full row) intentionally do not read it — see the prop
-          comment on DashboardFilterBar. */}
+          above (and the narrow grid, when a role lacks the full row)
+          intentionally do not read it — see the prop comment on
+          DashboardFilterBar. */}
       {(hasRow1 || hasRow2) && <DashboardFilterBar value={filters} onChange={setFilters} />}
 
-      {/* Fixed three-up: overdue orders, the whole chain, volume — equal
-          thirds, all answering "what's moving right now". */}
-      {hasRow1 && (
-        <div className="grid gap-4 lg:grid-cols-3 items-stretch">
-          <div>{render("stuck")}</div>
-          <div>{render("pipeline")}</div>
-          <div>{render("volumeTrend")}</div>
-        </div>
-      )}
+      {/* Volume & rejection rate, full width. */}
+      {hasRow1 && <div>{render("volumeTrend")}</div>}
 
       {/* Fixed three-up: quality and product-mix charts at 40% each, this
           month's numbers stacked in the remaining 20%. */}
@@ -159,11 +158,6 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
-
-      {/* Alerts and month figures run the full width; the rest pair up. Stuck
-          orders come first for the roles that get them — an alert below the fold
-          is not an alert. */}
-      {wide.filter((b) => b === "stuck").map((b) => <div key={b}>{render(b)}</div>)}
 
       {narrow.length > 0 && (
         // A lone card left over in an odd-sized set spans both columns rather
@@ -184,7 +178,7 @@ export default function DashboardPage() {
         ) : null;
       })()}
 
-      {wide.filter((b) => b !== "stuck").map((b) => <div key={b}>{render(b)}</div>)}
+      {wide.map((b) => <div key={b}>{render(b)}</div>)}
     </div>
   );
 }

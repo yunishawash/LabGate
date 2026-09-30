@@ -9,8 +9,9 @@
 export type BlockKey =
   | "waitingOnMe"     // A
   | "myOrders"        // B
-  | "pipeline"        // C
-  | "stuck"           // D
+  // C — the pipeline board — was dropped from the dashboard outright, its
+  // own widget removed rather than relocated; nothing computes it any more.
+  | "stuck"           // D — overdue orders; its card lives inside `StatsRow`
   | "thisMonth"       // E
   | "labQueue"        // G
   | "quality"         // H
@@ -36,11 +37,11 @@ export const ROLE_BLOCKS: Record<string, BlockKey[]> = {
   // doing better or worse than it was". GM/admin only: they're the roles
   // whose visibility spans every order, so a monthly total means what it
   // says rather than being a fragment of one.
-  general_manager:   ["stuck", "pipeline", "waitingOnMe", "thisMonth", "quality", "volumeTrend", "qualityTrend", "productMix", "coverage"],
+  general_manager:   ["stuck", "waitingOnMe", "thisMonth", "quality", "volumeTrend", "qualityTrend", "productMix", "coverage"],
   technical_manager: ["waitingOnMe", "labQueue", "quality", "qualityTrend", "coverage"],
   lab_technician:    ["labQueue", "quality", "coverage"],
   weighbridge:       ["readyToWeigh", "coverage"],
-  admin:             ["stuck", "pipeline", "thisMonth", "volumeTrend", "qualityTrend", "productMix", "coverage"],
+  admin:             ["stuck", "thisMonth", "volumeTrend", "qualityTrend", "productMix", "coverage"],
 };
 
 /** A role outside the chain still gets a page, not a crash. */

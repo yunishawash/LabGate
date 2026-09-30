@@ -48,6 +48,10 @@ export interface ISalesOrderStep {
    *  identical to the owner's would hollow out the whole chain. */
   actedAs: string;
   actedForRole: string;
+  /** The real name of whoever holds `actedForRole`, snapshotted at signing
+   *  time — "بالإنابة عن أحمد محمد", not just "بالإنابة عن المدير المالي".
+   *  Empty when `actedAs` is "primary" (nobody was stood in for). */
+  actedForName: string;
   note: string;
 }
 
@@ -136,6 +140,7 @@ const SalesOrderStepSchema = new Schema<ISalesOrderStep>(
     actedAt:      { type: Date, default: null },
     actedAs:      { type: String, enum: ["primary", "deputy", "delegate", "admin", ""], default: "" },
     actedForRole: { type: String, default: "" },
+    actedForName: { type: String, default: "" },
     note:         { type: String, default: "" },
   },
   { _id: false }
@@ -250,6 +255,7 @@ export function buildInitialSteps(
     actedAt: s.index === 1 ? now : null,
     actedAs: s.index === 1 ? "primary" : "",
     actedForRole: s.index === 1 ? s.role : "",
+    actedForName: "",
     note: "",
   }));
 }

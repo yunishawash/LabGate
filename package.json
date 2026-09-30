@@ -22,7 +22,8 @@
     "backfill:ar": "tsx src/scripts/backfill-arabic-names.ts",
     "backfill:line-weight": "tsx src/scripts/backfill-line-actual-weight.ts",
     "seed:prod": "tsx src/scripts/seed-production.ts",
-    "clear:demo": "tsx src/scripts/clear-demo-data.ts"
+    "clear:demo": "tsx src/scripts/clear-demo-data.ts",
+    "reset:password": "tsx src/scripts/reset-password.ts"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.11",

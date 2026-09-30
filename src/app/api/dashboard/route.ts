@@ -97,25 +97,9 @@ export async function GET(req: NextRequest) {
     data.myOrders = { live, rejected };
   }
 
-  // ── C · Pipeline board ───────────────────────────────────────────────────
-  if (want("pipeline")) {
-    const rows = await SalesOrder.aggregate([
-      { $match: andFilters(visible, { status: "Pending" }, orderExtra, dated("orderDate")) },
-      {
-        $group: {
-          _id: "$currentStageIndex",
-          count: { $sum: 1 },
-          kg: { $sum: "$totalWeightKg" },
-          oldest: { $min: "$currentStageEnteredAt" },
-        },
-      },
-    ]);
-    const byIndex = new Map(rows.map((r) => [r._id as number, r]));
-    data.pipeline = Array.from({ length: 8 }, (_, i) => {
-      const r = byIndex.get(i + 1);
-      return { index: i + 1, count: r?.count ?? 0, kg: r?.kg ?? 0, oldest: r?.oldest ?? null };
-    });
-  }
+  // C — the pipeline board — was dropped from the dashboard outright; no
+  // role's block list requests it any more (see dashboardBlocks.ts), so
+  // nothing here computes it either.
 
   // ── D · Stuck orders ─────────────────────────────────────────────────────
   if (want("stuck")) {

@@ -1,29 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongoose";
 import { requireSession } from "@/lib/requireSession";
-import { badRequest, dateRange, oid, oneOf } from "@/lib/apiHelpers";
+import { badRequest, dateRange, oneOf } from "@/lib/apiHelpers";
 import { visibilityFilter, andFilters, SALES_STAGES, type Actor } from "@/lib/salesWorkflow";
 import { liveDelegationRoles } from "@/lib/salesAuth";
+import { multiSelectFilters, lineLabStatuses } from "@/lib/reportHelpers";
 import SalesOrder from "@/models/SalesOrder";
 
-const REPORTS = ["cycleTime", "rejections", "variance", "customers", "coverage", "weightTrend", "weightTrendOrders"] as const;
+const REPORTS = ["variance", "customers", "weightTrend", "weightTrendOrders", "orders"] as const;
 export type ReportKey = (typeof REPORTS)[number];
-
-/**
- * Percentile from an unsorted sample, computed in JavaScript.
- *
- * MongoDB here is 6.x and `$percentile` needs 7+. The alternative — `$push` the
- * durations and reduce in the pipeline — is both slower and unreadable, and the
- * lab module already sets the precedent of computing CV% and ratings in JS.
- */
-function percentile(values: number[], p: number): number | null {
-  if (!values.length) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  // Nearest-rank: with 4 samples a "p90" between two points is a fiction, and
-  // interpolating would invent a duration nobody ever waited.
-  const rank = Math.ceil((p / 100) * sorted.length) - 1;
-  return sorted[Math.min(Math.max(rank, 0), sorted.length - 1)];
-}
 
 const round1 = (n: number | null) => (n === null ? null : Math.round(n * 10) / 10);
 
@@ -43,137 +28,14 @@ export async function GET(req: NextRequest) {
   const visible = visibilityFilter(actor, delegated);
 
   const { searchParams } = new URL(req.url);
-  const report = oneOf(searchParams.get("report"), REPORTS, "cycleTime") as ReportKey;
+  const report = oneOf(searchParams.get("report"), REPORTS, "variance") as ReportKey;
   const range = dateRange(searchParams.get("from"), searchParams.get("to"));
   const dated = (field: string) => (range ? { [field]: range } : {});
 
-  // ── How long each desk holds an order, and who is slow ───────────────────
-  if (report === "cycleTime") {
-    /**
-     * `steps.enteredAt` is stored precisely so this is possible: the wait is
-     * `actedAt - enteredAt` for that step, not the age of the order. Without it
-     * a slow approver at stage 5 would look identical to a slow one at stage 2.
-     */
-    const rows = await SalesOrder.aggregate([
-      { $match: andFilters(visible, dated("createdAt")) },
-      { $unwind: "$steps" },
-      {
-        $match: {
-          "steps.actedAt": { $ne: null },
-          "steps.enteredAt": { $ne: null },
-          // Stage 1 is the creation itself: `enteredAt` and `actedAt` are the
-          // same instant, so it would report a flat zero and pad the table with
-          // a row that answers nothing. How long somebody took to create the
-          // order they were creating is not a cycle time.
-          "steps.kind": { $ne: "create" },
-        },
-      },
-      {
-        $project: {
-          stageKey: "$steps.stageKey",
-          stageIndex: "$steps.stageIndex",
-          actedById: "$steps.actedById",
-          actedByName: "$steps.actedByName",
-          actedAs: "$steps.actedAs",
-          hours: {
-            $divide: [{ $subtract: ["$steps.actedAt", "$steps.enteredAt"] }, 3600000],
-          },
-        },
-      },
-      {
-        $group: {
-          _id: { stageKey: "$stageKey", stageIndex: "$stageIndex" },
-          n: { $sum: 1 },
-          avg: { $avg: "$hours" },
-          max: { $max: "$hours" },
-          all: { $push: "$hours" },
-          people: {
-            $push: { id: "$actedById", name: "$actedByName", hours: "$hours", actedAs: "$actedAs" },
-          },
-        },
-      },
-      { $sort: { "_id.stageIndex": 1 } },
-    ]);
-
-    const byStage = rows.map((r) => {
-      const people = new Map<string, { name: string; n: number; total: number }>();
-      for (const p of r.people as { id: unknown; name: string; hours: number }[]) {
-        const key = p.name || String(p.id);
-        const cur = people.get(key) ?? { name: p.name || "—", n: 0, total: 0 };
-        cur.n += 1;
-        cur.total += p.hours;
-        people.set(key, cur);
-      }
-      return {
-        stageKey: r._id.stageKey as string,
-        stageIndex: r._id.stageIndex as number,
-        n: r.n as number,
-        avgHours: round1(r.avg as number),
-        p90Hours: round1(percentile(r.all as number[], 90)),
-        maxHours: round1(r.max as number),
-        people: [...people.values()]
-          .map((p) => ({ name: p.name, n: p.n, avgHours: round1(p.total / p.n) }))
-          .sort((a, b) => (b.avgHours ?? 0) - (a.avgHours ?? 0)),
-      };
-    });
-
-    return NextResponse.json({ report, byStage });
-  }
-
-  // ── Why orders die, and where ────────────────────────────────────────────
-  if (report === "rejections") {
-    const match = andFilters(visible, { status: "Rejected" }, dated("updatedAt"));
-    const [byStage, reasons, denominators] = await Promise.all([
-      SalesOrder.aggregate([
-        { $match: match },
-        {
-          $group: {
-            _id: "$rejection.stageIndex",
-            count: { $sum: 1 },
-            kg: { $sum: "$totalWeightKg" },
-            rejectors: { $addToSet: "$rejection.byName" },
-          },
-        },
-        { $sort: { _id: 1 } },
-      ]),
-      SalesOrder.find(match)
-        .sort({ updatedAt: -1 }).limit(50)
-        .select("orderNumber customer customerAr totalWeightKg rejection updatedAt")
-        .lean(),
-      /**
-       * The denominator for a rejection RATE is not "all orders" — it is the
-       * orders that actually reached that stage. Two rejections out of three
-       * arrivals at finance is a different fact from two out of ninety.
-       */
-      Promise.all(
-        Array.from({ length: 8 }, (_, i) =>
-          SalesOrder.countDocuments(
-            andFilters(visible, { currentStageIndex: { $gte: i + 1 } }, dated("createdAt"))
-          ).then((reached) => ({ stageIndex: i + 1, reached }))
-        )
-      ),
-    ]);
-
-    const reachedBy = new Map(denominators.map((d) => [d.stageIndex, d.reached]));
-    return NextResponse.json({
-      report,
-      byStage: byStage.map((s) => ({
-        stageIndex: s._id as number | null,
-        count: s.count as number,
-        kg: s.kg as number,
-        rejectors: (s.rejectors as string[]).filter(Boolean),
-        reached: reachedBy.get(s._id as number) ?? 0,
-        ratePct: reachedBy.get(s._id as number)
-          ? Math.round((s.count / (reachedBy.get(s._id as number) as number)) * 1000) / 10
-          : null,
-      })),
-      recent: reasons,
-    });
-  }
-
   // ── Are we shipping what we sold ─────────────────────────────────────────
   if (report === "variance") {
-    const match = andFilters(visible, { status: "Posted" }, dated("postedAt"));
+    const { customerFilter, productFilter } = multiSelectFilters(searchParams);
+    const match = andFilters(visible, { status: "Posted" }, dated("postedAt"), customerFilter, productFilter);
     const [byCustomer, outliers, overall] = await Promise.all([
       SalesOrder.aggregate([
         { $match: match },
@@ -299,74 +161,17 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // ── How often a desk is signed by somebody other than its owner ──────────
-  if (report === "coverage") {
-    /**
-     * A stage covered 60% of the time by a deputy is a staffing fact management
-     * should see, not a hidden one — and it is only visible because every
-     * signature records `actedAs` and `actedForRole` rather than pretending the
-     * stand-in was the owner.
-     */
-    const rows = await SalesOrder.aggregate([
-      { $match: andFilters(visible, dated("createdAt")) },
-      { $unwind: "$steps" },
-      { $match: { "steps.actedAt": { $ne: null } } },
-      {
-        $group: {
-          _id: { stageIndex: "$steps.stageIndex", actedAs: "$steps.actedAs" },
-          count: { $sum: 1 },
-          people: { $addToSet: "$steps.actedByName" },
-        },
-      },
-      { $sort: { "_id.stageIndex": 1 } },
-    ]);
-
-    const byStage = new Map<number, { stageIndex: number; total: number; kinds: Record<string, number>; people: string[] }>();
-    for (const r of rows) {
-      const i = r._id.stageIndex as number;
-      const cur = byStage.get(i) ?? { stageIndex: i, total: 0, kinds: {}, people: [] };
-      const kind = (r._id.actedAs as string) || "primary";
-      cur.total += r.count as number;
-      cur.kinds[kind] = (cur.kinds[kind] ?? 0) + (r.count as number);
-      cur.people = Array.from(new Set([...cur.people, ...((r.people as string[]) ?? [])])).filter(Boolean);
-      byStage.set(i, cur);
-    }
-
-    return NextResponse.json({
-      report,
-      byStage: [...byStage.values()]
-        .sort((a, b) => a.stageIndex - b.stageIndex)
-        .map((s) => ({
-          ...s,
-          coveredPct: s.total
-            ? Math.round(((s.total - (s.kinds.primary ?? 0)) / s.total) * 1000) / 10
-            : 0,
-        })),
-    });
-  }
-
   // ── Ordered vs weighed, by month — one line entered, one line at the scale ─
   if (report === "weightTrend") {
-    const customerId = searchParams.get("customerId") || "";
-    const productId = searchParams.get("productId") || "";
-
-    let customerFilter = null;
-    if (customerId) {
-      const cid = oid(customerId);
-      if (!cid) return badRequest("Invalid customer id");
-      customerFilter = { customerId: cid };
-    }
-
-    const match = andFilters(visible, { status: "Posted" }, dated("postedAt"), customerFilter);
+    const { customerFilter, productIds, productFilter } = multiSelectFilters(searchParams);
+    const match = andFilters(visible, { status: "Posted" }, dated("postedAt"), customerFilter, productFilter);
 
     let rows;
-    if (productId) {
-      const pid = oid(productId);
-      if (!pid) return badRequest("Invalid product id");
+    if (productIds.length) {
       rows = await SalesOrder.aggregate([
         { $match: match },
         { $unwind: "$lines" },
-        { $match: { "lines.productId": pid } },
+        { $match: { "lines.productId": { $in: productIds } } },
         {
           $group: {
             _id: { y: { $year: "$postedAt" }, m: { $month: "$postedAt" } },
@@ -401,7 +206,7 @@ export async function GET(req: NextRequest) {
         orderedKg: r.orderedKg as number,
         actualKg: r.actualKg as number,
       })),
-      filteredByProduct: !!productId,
+      filteredByProduct: productIds.length > 0,
     });
   }
 
@@ -413,20 +218,7 @@ export async function GET(req: NextRequest) {
       return badRequest("A valid year and month (0-11) are required");
     }
 
-    const customerId = searchParams.get("customerId") || "";
-    const productId = searchParams.get("productId") || "";
-    let customerFilter = null;
-    if (customerId) {
-      const cid = oid(customerId);
-      if (!cid) return badRequest("Invalid customer id");
-      customerFilter = { customerId: cid };
-    }
-    let productFilter = null;
-    if (productId) {
-      const pid = oid(productId);
-      if (!pid) return badRequest("Invalid product id");
-      productFilter = { "lines.productId": pid };
-    }
+    const { customerFilter, productFilter } = multiSelectFilters(searchParams);
 
     // The exact month the clicked point represents — same UTC-month bucket
     // `$year`/`$month` grouped by above, expressed as a plain date range so
@@ -448,6 +240,50 @@ export async function GET(req: NextRequest) {
       .lean();
 
     return NextResponse.json({ report, orders });
+  }
+
+  // ── One row per order line, grouped by order ──────────────────────────────
+  if (report === "orders") {
+    const { customerFilter, productFilter } = multiSelectFilters(searchParams);
+    const match = andFilters(visible, dated("orderDate"), customerFilter, productFilter);
+
+    const orders = await SalesOrder.find(match)
+      .sort({ orderDate: -1 })
+      .limit(1000)
+      .select("orderNumber customer customerAr orderDate deliveryDate lines labSampleIds")
+      .lean();
+
+    const labByOrder = await lineLabStatuses(orders as unknown as { _id: unknown; labSampleIds?: unknown[] }[]);
+
+    return NextResponse.json({
+      report,
+      orders: orders.map((o) => {
+        const d = o as unknown as Record<string, never>;
+        const labByProduct = labByOrder.get(String(d._id)) ?? new Map();
+        const lines = (d.lines ?? []) as unknown as {
+          productId: unknown; product: string; productAr?: string;
+          bagWeightKg: number; bagCount: number; lineWeightKg: number; actualWeightKg: number | null;
+        }[];
+        return {
+          _id: String(d._id),
+          orderNumber: d.orderNumber as string,
+          customer: d.customer as string,
+          customerAr: (d.customerAr as string) ?? "",
+          orderDate: d.orderDate as string,
+          deliveryDate: (d.deliveryDate as string) ?? null,
+          lines: lines.map((l) => ({
+            productId: String(l.productId),
+            product: l.product,
+            productAr: l.productAr ?? "",
+            bagWeightKg: l.bagWeightKg,
+            bagCount: l.bagCount,
+            lineWeightKg: l.lineWeightKg,
+            actualWeightKg: l.actualWeightKg,
+            labStatus: labByProduct.get(String(l.productId)) ?? null,
+          })),
+        };
+      }),
+    });
   }
 
   return badRequest("Unknown report");

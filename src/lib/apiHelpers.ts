@@ -32,6 +32,19 @@ export function oid(value: unknown): mongoose.Types.ObjectId | null {
   return mongoose.Types.ObjectId.isValid(s) ? new mongoose.Types.ObjectId(s) : null;
 }
 
+/** A comma-separated multi-select query param (e.g. `?customerIds=a,b,c`) —
+ *  malformed ids are silently dropped rather than 400ing, since one stray id
+ *  in a multi-select filter should not fail the whole report/export. */
+export function oidList(value: string | null): mongoose.Types.ObjectId[] {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => oid(s))
+    .filter((v): v is mongoose.Types.ObjectId => v !== null);
+}
+
 /**
  * Copy only the named fields out of a body. THE defence against mass
  * assignment: without it, a client can set `role`, `isActive`, `_id` or

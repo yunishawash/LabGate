@@ -182,7 +182,12 @@ export async function POST(req: NextRequest, { params }: Params) {
     id,
     slot.stage,
     { _id: userDoc._id, name: userDoc.name },
-    { actedAs: slot.actedAs, actedForRole: slot.actedForRole, note: noteCheck.value }
+    {
+      actedAs: slot.actedAs,
+      actedForRole: slot.actedForRole,
+      actedForName: slot.actedForName,
+      note: noteCheck.value,
+    }
   );
 
   if ("code" in result) {

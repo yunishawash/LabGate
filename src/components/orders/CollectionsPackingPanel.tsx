@@ -1,6 +1,6 @@
 "use client";
 import { useState, type ReactNode } from "react";
-import { Landmark, PackageCheck } from "lucide-react";
+import { Landmark, PackageCheck, Lock } from "lucide-react";
 import { useLang } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -31,16 +31,23 @@ export function CollectionsPackingPanel({ order, onDone }: Props) {
 
   if (!p.canWriteCollections && !p.canWritePacking) return null;
 
+  // The Collections note is the thing the Finance Manager approved — once he
+  // has signed, it locks so the record he signed off on can't drift.
+  const financeApproved = order.steps.some(
+    (s) => s.stageKey === "finance_manager_approval" && (s.status === "approved" || s.status === "completed")
+  );
+
   return (
     <aside className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-4">
       {p.canWriteCollections && (
         <AnnotationField
           icon={<Landmark size={15} className="text-slate-400" />}
-          label={t("Collections note", "ملاحظة التحصيلات")}
+          label={t("Collections note", "ملاحظة دائرة التحصيلات")}
           kind="collections"
           orderId={order._id}
           value={order.collections}
           onDone={onDone}
+          locked={financeApproved}
         />
       )}
       {p.canWritePacking && (
@@ -58,7 +65,7 @@ export function CollectionsPackingPanel({ order, onDone }: Props) {
 }
 
 function AnnotationField({
-  icon, label, kind, orderId, value, onDone,
+  icon, label, kind, orderId, value, onDone, locked,
 }: {
   icon: ReactNode;
   label: string;
@@ -66,13 +73,14 @@ function AnnotationField({
   orderId: string;
   value?: { note?: string; byName?: string; at?: string | null };
   onDone: () => void;
+  locked?: boolean;
 }) {
   const { t } = useLang();
   const [note, setNote] = useState(value?.note ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const dirty = note !== (value?.note ?? "");
+  const dirty = !locked && note !== (value?.note ?? "");
 
   const save = async () => {
     setSaving(true);
@@ -101,9 +109,18 @@ function AnnotationField({
   return (
     <div className="space-y-1.5">
       <Label className="flex items-center gap-1.5">{icon}{label}</Label>
-      <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} />
+      <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} disabled={locked} />
       {value?.byName && (
         <p className="text-xs text-slate-400">{t("Last by", "آخر تحديث من")} {value.byName}</p>
+      )}
+      {locked && (
+        <p className="text-xs text-slate-400 flex items-center gap-1">
+          <Lock size={11} />
+          {t(
+            "Locked — the Finance Manager has already approved.",
+            "مُقفلة — اعتمدها المدير المالي بالفعل."
+          )}
+        </p>
       )}
       {error && <p className="text-xs text-red-600">{error}</p>}
       {dirty && (
