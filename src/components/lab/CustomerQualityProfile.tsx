@@ -10,6 +10,7 @@ import { KpiPanel } from "@/components/lab/KpiPanel";
 import { LabTrendChart, type LabTrendPoint } from "@/components/ui/lab-trend-chart";
 import { useLang } from "@/components/layout/AppShell";
 import { formatDate } from "@/lib/utils";
+import { productPickerOptions } from "@/types";
 import type { ILabSample, ILabProduct, ILabParameter } from "@/types";
 
 const SELECT_CLASS =
@@ -112,7 +113,7 @@ export function CustomerQualityProfile({ customerId }: { customerId: string }) {
             onChange={setProductFilter}
             options={[
               { value: "all", label: t("All products", "كل المنتجات") },
-              ...products.map((p) => ({ value: p._id, label: p.name })),
+              ...productPickerOptions(products, lang),
             ]}
           />
         </div>

@@ -3,7 +3,7 @@ import { connectDB } from "@/lib/mongoose";
 import AuditLog from "@/models/AuditLog";
 
 export interface AuditParams {
-  entityType: "sales_order" | "delegation" | "user" | "lab_sample";
+  entityType: "sales_order" | "delegation" | "user" | "lab_sample" | "rejection_reason";
   entityId: mongoose.Types.ObjectId | string;
   entityLabel?: string;
   action: string;

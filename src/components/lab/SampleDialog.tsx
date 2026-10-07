@@ -19,6 +19,7 @@ import {
   LAB_SHIFT_LABELS,
   type ILabProduct, type ILabCustomer, type ILabProductSpec,
   type ILabSample, type ILabAttachment, type LabStatus,
+  productPickerOptions,
 } from "@/types";
 
 const SELECT_CLASS =
@@ -334,10 +335,8 @@ export function SampleDialog({
                 disabled={prefill?.lockProduct}
                 onChange={setProductId}
                 placeholder={t("Choose…", "اختر…")}
-                options={[
-                  { value: "", label: t("Choose…", "اختر…") },
-                  ...products.map((p) => ({ value: p._id, label: p.name })),
-                ]}
+                searchPlaceholder={t("Search products…", "ابحث عن صنف…")}
+                options={productPickerOptions(products, lang)}
               />
             </div>
 

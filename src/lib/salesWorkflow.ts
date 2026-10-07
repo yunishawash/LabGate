@@ -177,6 +177,52 @@ export function stageComplete(order: OrderLike, i: number): boolean {
 }
 
 /**
+ * Was stage `i` written off this order's route at creation?
+ *
+ * True only when the stage exists in the current table AND every one of its
+ * steps on this order is `skipped` — which is how an order with no lab-tested
+ * product stores stage 6 (see `buildInitialSteps`).
+ *
+ * ⚠️ `skipped` has a SECOND meaning: `rejectOrder` marks every still-pending
+ * step skipped so the ladder can say "never reached". So on a rejected order
+ * this returns true for stages that were merely never arrived at — which is
+ * why it must only ever be asked about a LIVE order. Both callers below are
+ * guarded by that: `nextLiveStageIndex` runs inside a transition that already
+ * required `status: "Pending"`, and the UI asks only for a stage the order has
+ * not yet reached on an order it has already checked is not terminal.
+ *
+ * Kept deliberately separate from `stageComplete` rather than folded into it.
+ * A skipped stage is not a satisfied one — nobody signed it — and the one
+ * invariant `stageComplete` must keep is that it never reports true on a dead
+ * order's unsigned steps.
+ */
+export function stageSkipped(order: OrderLike, i: number): boolean {
+  const liveKeys = new Set<string>(stagesAt(i).map((s) => s.key));
+  const steps = order.steps.filter((s) => s.stageIndex === i && liveKeys.has(s.stageKey));
+  return steps.length > 0 && steps.every((s) => s.status === "skipped");
+}
+
+/**
+ * The next stage this order will actually STOP at, skipping anything written
+ * off its route — the function every transition advances by.
+ *
+ * `nextStageIndex` answers "what is the next number", which is a different
+ * question and still the right one for the stage table itself. This answers
+ * "where does this particular order go", and the two differ exactly when a
+ * stage was skipped: an untested order at stage 5 gets 7 from here and 6
+ * from there.
+ *
+ * Still strictly forward-only, so `currentStageIndex` stays monotonic — the
+ * invariant the whole visibility rule is built on. Skipping jumps the pointer
+ * further ahead, never back.
+ */
+export function nextLiveStageIndex(order: OrderLike, from: number): number | null {
+  let i = nextStageIndex(from);
+  while (i !== null && stageSkipped(order, i)) i = nextStageIndex(i);
+  return i;
+}
+
+/**
  * Which slots this actor can act on RIGHT NOW, ignoring deputy/delegate
  * authority (that needs database facts — see `authorityFor`). Empty = read-only.
  */

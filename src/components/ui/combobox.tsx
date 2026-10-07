@@ -14,6 +14,17 @@ export interface ComboboxOption {
   /** Optional secondary line — e.g. an email under a name, a code under a
    *  customer. Shown smaller, under the label, and included in the search. */
   hint?: string;
+  /**
+   * Optional heading this option sits under — e.g. a product type over its
+   * grades. Options carrying the same `group` are rendered together under one
+   * heading, in the order they first appear; ungrouped options stay in a
+   * leading, headingless group.
+   *
+   * Searched alongside the label, so typing "طحين" finds every grade of it
+   * even though no grade is called that — which is the whole reason a person
+   * reaches for a heading in the first place.
+   */
+  group?: string;
 }
 
 /**
@@ -53,8 +64,48 @@ export function Combobox({
   const [open, setOpen] = useState(false);
   const selected = options.find((o) => o.value === value);
 
+  /**
+   * Options bucketed by heading, preserving first-appearance order so the
+   * caller's own ordering survives. A list with no `group` anywhere collapses
+   * to a single headingless bucket, which renders exactly as it always did —
+   * every existing call site is untouched by this.
+   */
+  const groups: [string, ComboboxOption[]][] = [];
+  const groupIndex = new Map<string, number>();
+  for (const o of options) {
+    const key = o.group ?? "";
+    let at = groupIndex.get(key);
+    if (at === undefined) {
+      at = groups.length;
+      groupIndex.set(key, at);
+      groups.push([key, []]);
+    }
+    groups[at][1].push(o);
+  }
+
+  /**
+   * `modal` on the Popover below is load-bearing — do not remove it as
+   * redundant.
+   *
+   * The popover is portalled to `document.body`. When it opens inside a
+   * Dialog, `@radix-ui/react-dialog` has wrapped the overlay in `RemoveScroll`
+   * with `shards: [contentRef]`, and that lock cancels the wheel for any
+   * target that is neither inside the lock nor inside a shard. The portalled
+   * list is in neither, so `preventDefault()` ran on every wheel event and the
+   * dropdown would not scroll with a mouse — while keyboard nav and a
+   * programmatic `scrollTop` both worked, which is what made it look like a
+   * styling problem rather than a scroll-lock one.
+   *
+   * `modal` gives the popover its own `RemoveScroll`, which registers the
+   * event as handled-and-allowed before the dialog's lock sees it.
+   *
+   * Verified both ways: the wheel scrolls, and nesting the two locks does not
+   * leave the dialog dead afterwards — typing, adding a line, opening a second
+   * dropdown and closing everything all still work, on a page as well as
+   * inside a dialog.
+   */
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpen} modal>
       <PopoverTrigger asChild>
         <button
           id={id}
@@ -89,25 +140,27 @@ export function Combobox({
             <CommandEmpty className="py-4 text-center text-sm text-slate-400">
               {emptyText ?? t("No results.", "لا توجد نتائج.")}
             </CommandEmpty>
-            <CommandGroup>
-              {options.map((o) => (
-                <CommandItem
-                  key={o.value}
-                  value={o.hint ? `${o.label} ${o.hint}` : o.label}
-                  onSelect={() => { onChange(o.value); setOpen(false); }}
-                  className="cursor-pointer flex items-center gap-2"
-                >
-                  <Check
-                    size={14}
-                    className={cn("flex-shrink-0", o.value === value ? "opacity-100 text-sky-600" : "opacity-0")}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate">{o.label}</span>
-                    {o.hint && <span className="block truncate text-xs text-slate-400">{o.hint}</span>}
-                  </span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
+            {groups.map(([heading, items]) => (
+              <CommandGroup key={heading || "__ungrouped"} heading={heading || undefined}>
+                {items.map((o) => (
+                  <CommandItem
+                    key={o.value}
+                    value={[o.label, o.hint, o.group].filter(Boolean).join(" ")}
+                    onSelect={() => { onChange(o.value); setOpen(false); }}
+                    className="cursor-pointer flex items-center gap-2"
+                  >
+                    <Check
+                      size={14}
+                      className={cn("flex-shrink-0", o.value === value ? "opacity-100 text-sky-600" : "opacity-0")}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{o.label}</span>
+                      {o.hint && <span className="block truncate text-xs text-slate-400">{o.hint}</span>}
+                    </span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            ))}
           </CommandList>
         </Command>
       </PopoverContent>

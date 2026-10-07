@@ -57,6 +57,43 @@ export interface OrderPermissions {
   /** Stages held up by an absent primary that has no deputy. Surfacing this is
    *  what keeps a stalled order from stalling silently (SPEC §8.2). */
   stalled: { stageKey: string; role: string } | null;
+  /**
+   * WHOSE authority a rejection by this actor would be recorded under —
+   * `rejectOrder`'s `actedForRole`, computed here so the reject dialog can
+   * know whether the managed reason list applies without re-deriving it.
+   *
+   * The client must not work this out for itself. Whether the Technical
+   * Manager's closed vocabulary applies depends on deputy and delegation
+   * facts that live in the database, and a second copy of that rule in the
+   * browser would be free to drift from the one the route enforces — showing
+   * a free-text box to someone the server will then refuse.
+   */
+  rejectAsRole: string;
+}
+
+/**
+ * Mirror of the `actedForRole` the reject route derives. Kept beside
+ * `orderPermissions` and fed the same `granted` list it already computed, so
+ * the two cannot disagree about who a rejection belongs to.
+ */
+function rejectAsRoleFor(
+  actor: Actor,
+  granted: { stage: StageDef; authority: Exclude<ActorAuthority, null> }[]
+): string {
+  // An admin override is recorded as an admin act, not as a stand-in for the
+  // role whose stage it happens to be — so the closed list does not bind it.
+  if (actor.role === "admin") return "admin";
+
+  // An approval slot of their own at the current stage, held primarily or as a
+  // deputy/delegate. `granted` has already resolved which.
+  const approval = granted.find((g) => g.stage.kind === "approval");
+  if (approval) {
+    return "forRole" in approval.authority ? approval.authority.forRole : approval.stage.role;
+  }
+
+  // No slot — this is the General Manager's standing power to kill a live
+  // order at any stage, exercised in his own name.
+  return actor.role;
 }
 
 /**
@@ -120,6 +157,7 @@ export async function orderPermissions(
         }
       : null,
     stalled,
+    rejectAsRole: rejectAsRoleFor(actor, granted),
   };
 }
 

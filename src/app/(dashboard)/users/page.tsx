@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Combobox } from "@/components/ui/combobox";
 import { UserDialog } from "@/components/users/UserDialog";
+import { PasswordDialog } from "@/components/users/PasswordDialog";
 import { DelegationPanel } from "@/components/users/DelegationPanel";
 import { formatDate } from "@/lib/utils";
 import { USER_ROLES, ROLE_LABELS, type UserRole } from "@/types";
@@ -41,6 +42,10 @@ export default function UsersPage() {
   const [role, setRole] = useState("all");
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<UserRow | null>(null);
+  /** Separate from `editing`: resetting a password is its own dialog and its
+   *  own job. Both buttons used to set `editing`, so the key icon opened the
+   *  full edit form — two buttons that did the identical thing. */
+  const [resettingPassword, setResettingPassword] = useState<UserRow | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   const [total, setTotal] = useState(0);
@@ -219,7 +224,7 @@ export default function UsersPage() {
                 <IconBtn title={t("Edit", "تعديل")} onClick={() => setEditing(u)}>
                   <UserCog size={15} />
                 </IconBtn>
-                <IconBtn title={t("Reset password", "إعادة تعيين كلمة السر")} onClick={() => setEditing(u)}>
+                <IconBtn title={t("Reset password", "إعادة تعيين كلمة السر")} onClick={() => setResettingPassword(u)}>
                   <KeyRound size={15} />
                 </IconBtn>
                 <IconBtn
@@ -267,6 +272,13 @@ export default function UsersPage() {
       )}
 
       <DelegationPanel users={allActiveUsers} onChanged={load} />
+
+      <PasswordDialog
+        open={!!resettingPassword}
+        user={resettingPassword}
+        onClose={() => setResettingPassword(null)}
+        onSaved={load}
+      />
 
       <UserDialog
         open={creating || !!editing}

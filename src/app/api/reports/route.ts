@@ -261,8 +261,9 @@ export async function GET(req: NextRequest) {
         const d = o as unknown as Record<string, never>;
         const labByProduct = labByOrder.get(String(d._id)) ?? new Map();
         const lines = (d.lines ?? []) as unknown as {
-          productId: unknown; product: string; productAr?: string;
-          bagWeightKg: number; bagCount: number; lineWeightKg: number; actualWeightKg: number | null;
+          productId: unknown; product: string; productAr?: string; packaging?: string;
+          bagWeightKg: number | null; bagCount: number | null;
+          lineWeightKg: number; actualWeightKg: number | null;
         }[];
         return {
           _id: String(d._id),
@@ -275,8 +276,11 @@ export async function GET(req: NextRequest) {
             productId: String(l.productId),
             product: l.product,
             productAr: l.productAr ?? "",
-            bagWeightKg: l.bagWeightKg,
-            bagCount: l.bagCount,
+            // Passed through as stored — null on a bulk line, which the screen
+            // renders as "صبّ" rather than as a missing number.
+            packaging: l.packaging === "bulk" ? "bulk" : "bagged",
+            bagWeightKg: l.bagWeightKg ?? null,
+            bagCount: l.bagCount ?? null,
             lineWeightKg: l.lineWeightKg,
             actualWeightKg: l.actualWeightKg,
             labStatus: labByProduct.get(String(l.productId)) ?? null,

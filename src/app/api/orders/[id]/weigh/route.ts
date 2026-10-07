@@ -7,6 +7,11 @@ import { visibilityFilter, andFilters, type Actor, type OrderLike } from "@/lib/
 import { liveDelegationRoles } from "@/lib/salesAuth";
 import { resolveSlot, claimAndAdvance } from "@/lib/salesTransition";
 import SalesOrder from "@/models/SalesOrder";
+import { VARIANCE_TOLERANCE_PCT } from "@/types";
+
+/** Same ceiling the order's own bulk line uses: a real truck is ~30 t, so this
+ *  only catches a figure typed in the wrong unit. */
+const MAX_LINE_TONS = 200;
 
 interface WeighLine {
   productId: unknown;
@@ -63,16 +68,80 @@ export async function POST(
   if (!Array.isArray(inputLines) || inputLines.length !== like.lines.length) {
     return badRequest("A weight for every line is required");
   }
-  const weights = inputLines.map((v) => Number(v));
-  if (weights.some((w) => !Number.isFinite(w) || w <= 0)) {
-    return badRequest("Every line needs a positive net weight");
+
+  /**
+   * Sent in TONNES — the unit the weighbridge ticket and the mill both talk
+   * in — and stored in kilograms, which every other weight in this system is
+   * stored in and which the variance maths, the reports and the exports all
+   * depend on. Converted here, at the edge, exactly once; three decimals of a
+   * tonne is one kilogram, so nothing is lost on the way in.
+   */
+  const tons = inputLines.map((v) => Number(v));
+  if (tons.some((w) => !Number.isFinite(w) || w <= 0)) {
+    return badRequest("Every line needs a positive net weight in tonnes");
   }
+  if (tons.some((w) => w > MAX_LINE_TONS)) {
+    return badRequest(`A line cannot weigh more than ${MAX_LINE_TONS} t — check the figure`);
+  }
+  const weights = tons.map((w) => Math.round(w * 1000 * 1000) / 1000);
 
   // One textarea, but the value is written into two schema locations — the
   // step's own note and the order-level `weighNote` — so it is validated
   // once here and reused, not re-checked against two different caps.
   const noteCheck = strictStr(body?.note, 2000, "Note");
   if (!noteCheck.ok) return badStrictStr(noteCheck);
+
+  const varianceReasonCheck = strictStr(body?.varianceReason, 2000, "Variance reason");
+  if (!varianceReasonCheck.ok) return badStrictStr(varianceReasonCheck);
+
+  /**
+   * The load itself: where it is going, what is carrying it, and what the
+   * scale read before and after. These were ruled lines on a printed sheet
+   * until now, so the system held a net weight with nothing to attribute it
+   * to.
+   *
+   * All four are required. The certificate is handed to the driver at the
+   * gate, and a blank vehicle or carrier on it is the field being there
+   * without being used — which is the state this replaces.
+   */
+  const loadFields: [key: string, label: string, max: number][] = [
+    ["weighDestination", "Destination", 200],
+    ["weighVehicleNo", "Vehicle number", 60],
+    ["weighCarrier", "Carrier", 160],
+    ["weighDriver", "Driver", 160],
+  ];
+  const load: Record<string, string> = {};
+  for (const [key, label, max] of loadFields) {
+    const check = strictStr(body?.[key], max, label);
+    if (!check.ok) return badStrictStr(check);
+    if (!check.value) return badRequest(`${label} is required to weigh this load`);
+    load[key] = check.value;
+  }
+
+  /**
+   * Gross and tare, in tonnes like every other weight entered here.
+   *
+   * Kept ALONGSIDE the per-line nets rather than replacing them: the scale
+   * sees one truck, the order needs a figure per product. The two are
+   * expected to agree, and keeping both is what makes a disagreement
+   * visible — deriving one from the other would hide it.
+   */
+  const grossTons = Number(body?.grossTons);
+  const tareTons = Number(body?.tareTons);
+  if (!Number.isFinite(grossTons) || grossTons <= 0) {
+    return badRequest("The gross weight (tonnes) is required");
+  }
+  if (!Number.isFinite(tareTons) || tareTons <= 0) {
+    return badRequest("The tare weight (tonnes) is required");
+  }
+  if (tareTons >= grossTons) {
+    return badRequest("The tare weight must be less than the gross weight");
+  }
+  if (grossTons > MAX_LINE_TONS) {
+    return badRequest(`The gross weight cannot exceed ${MAX_LINE_TONS} t — check the figure`);
+  }
+  const grossWeightKg = Math.round(grossTons * 1000 * 1000) / 1000;
+  const tareWeightKg = Math.round(tareTons * 1000 * 1000) / 1000;
 
   const shaped: OrderLike = {
     status: like.status,
@@ -94,6 +163,25 @@ export async function POST(
   const varianceKg = Math.round((actualNetWeightKg - ordered) * 1000) / 1000;
   const variancePct = ordered ? Math.round((varianceKg / ordered) * 10000) / 100 : null;
 
+  /**
+   * Past the tolerance, the gap has to be explained before it can be posted.
+   *
+   * Checked AFTER the weights are computed, from the server's own figures —
+   * never from a flag the client sends about whether an explanation was
+   * needed. The dialog shows the same field at the same threshold, but the
+   * dialog is where the operator is helped, not where the rule lives.
+   *
+   * Only the ordered weight can make this unanswerable: an order totalling
+   * zero has no percentage to compare against, so `variancePct` is null and
+   * nothing is demanded.
+   */
+  if (variancePct !== null && Math.abs(variancePct) > VARIANCE_TOLERANCE_PCT && !varianceReasonCheck.value) {
+    return badRequest(
+      `The weight differs from the order by ${variancePct > 0 ? "+" : ""}${variancePct}% ` +
+        `(beyond ±${VARIANCE_TOLERANCE_PCT}%). State the reason for the difference before posting.`
+    );
+  }
+
   const result = await claimAndAdvance(
     id,
     slot.stage,
@@ -109,6 +197,10 @@ export async function POST(
         varianceKg,
         variancePct,
         weighNote: noteCheck.value,
+        varianceReason: varianceReasonCheck.value,
+        ...load,
+        grossWeightKg,
+        tareWeightKg,
         weighedById: userDoc._id,
         weighedByName: userDoc.name,
       },
@@ -136,5 +228,6 @@ export async function POST(
     actualNetWeightKg,
     varianceKg,
     variancePct,
+    varianceReason: varianceReasonCheck.value,
   });
 }

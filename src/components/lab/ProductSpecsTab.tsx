@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { useLang } from "@/components/layout/AppShell";
 import {
-  LAB_OPERATOR_LABELS,
+  LAB_OPERATOR_LABELS, productPickerOptions, isOrderableProduct,
   type ILabProduct, type ILabProductSpec, type ILabParameter, type LabOperator,
 } from "@/types";
 
@@ -40,7 +40,18 @@ const same = (a: Draft, b: Draft) =>
 const EMPTY_PARAM = {
   name: "", nameAr: "", unit: "", operator: "range" as LabOperator,
   defaultMin: "", defaultMax: "", defaultTarget: "", order: "0",
+  /** Empty = applies to every product. See LabParameter.productIds. */
+  productIds: [] as string[],
 };
+
+/**
+ * The add/edit form for a catalogue row.
+ *
+ * `parentId` empty means a TYPE (نوع منتج); set means a GRADE (صنف) of that
+ * type. `orderRequiresLabTest` is only ever sent for a type — a grade inherits
+ * it, and the server refuses to set it on one.
+ */
+const EMPTY_PRODUCT = { name: "", nameAr: "", parentId: "", orderRequiresLabTest: true };
 
 export function ProductSpecsTab({ products, parameters, onProductsChanged, onParametersChanged }: {
   products: ILabProduct[];
@@ -60,7 +71,7 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
   // Add AND rename share this one dialog — `editingProduct` set means rename.
   const [productDialogOpen, setProductDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<ILabProduct | null>(null);
-  const [productForm, setProductForm] = useState({ name: "", nameAr: "" });
+  const [productForm, setProductForm] = useState(EMPTY_PRODUCT);
   const [productSaving, setProductSaving] = useState(false);
   const [productError, setProductError] = useState("");
 
@@ -72,10 +83,18 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
   const [paramError, setParamError] = useState("");
 
   useEffect(() => {
-    if (!productId && products.length) setProductId(products[0]._id);
+    // The first ORDERABLE row, not the first row: "طحين" has no spec sheet of
+    // its own, so defaulting to it would open this screen on an empty table.
+    if (productId) return;
+    const first = products.find(isOrderableProduct);
+    if (first) setProductId(first._id);
   }, [products, productId]);
 
   const selectedProduct = products.find((p) => p._id === productId) ?? null;
+  const productTypes = products.filter((p) => !p.parentId);
+  const parentOfSelected = selectedProduct?.parentId
+    ? products.find((p) => p._id === selectedProduct.parentId) ?? null
+    : null;
 
   const loadSpecs = useCallback(async () => {
     if (!productId) return;
@@ -148,10 +167,22 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
     setSavingId(null);
   };
 
-  const openAddProduct = () => { setEditingProduct(null); setProductForm({ name: "", nameAr: "" }); setProductError(""); setProductDialogOpen(true); };
+  const openAddProduct = (parentId = "") => {
+    setEditingProduct(null);
+    setProductForm({ ...EMPTY_PRODUCT, parentId });
+    setProductError("");
+    setProductDialogOpen(true);
+  };
   const openRenameProduct = (p: ILabProduct) => {
     setEditingProduct(p);
-    setProductForm({ name: p.name, nameAr: p.nameAr ?? "" });
+    setProductForm({
+      name: p.name,
+      nameAr: p.nameAr ?? "",
+      parentId: p.parentId ?? "",
+      // Absent on a product saved before the flag existed — all flour, all
+      // tested. Defaulting the other way would quietly drop the lab stage.
+      orderRequiresLabTest: p.orderRequiresLabTest !== false,
+    });
     setProductError("");
     setProductDialogOpen(true);
   };
@@ -166,7 +197,21 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
         {
           method: editingProduct ? "PUT" : "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(productForm),
+          // `orderRequiresLabTest` goes only with a TYPE. Sending it for a
+          // grade is a 400 by design: the decision belongs to the type, and
+          // a grade that disagreed with its own type would split one
+          // product's orders across two routes.
+          body: JSON.stringify(
+            productForm.parentId
+              ? editingProduct
+                ? { name: productForm.name, nameAr: productForm.nameAr }
+                : { name: productForm.name, nameAr: productForm.nameAr, parentId: productForm.parentId }
+              : {
+                  name: productForm.name,
+                  nameAr: productForm.nameAr,
+                  orderRequiresLabTest: productForm.orderRequiresLabTest,
+                }
+          ),
         }
       );
       if (!res.ok) {
@@ -189,7 +234,12 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
   // Archive, not delete — matches the customer register's own convention: a
   // product referenced by past orders/samples must keep its name on them.
   const removeProduct = async (p: ILabProduct) => {
-    if (!confirm(t(`Remove product "${p.name}"?`, `إزالة الصنف "${p.name}"؟`))) return;
+    const isType = !p.parentId;
+    if (!confirm(
+      isType
+        ? t(`Remove product type "${p.name}"?`, `إزالة نوع المنتج "${p.name}"؟`)
+        : t(`Remove grade "${p.name}"?`, `إزالة الصنف "${p.name}"؟`)
+    )) return;
     const res = await fetch(`/api/lab/products/${p._id}`, { method: "DELETE" });
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
@@ -215,6 +265,7 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
       defaultMax: p.defaultMax == null ? "" : String(p.defaultMax),
       defaultTarget: p.defaultTarget == null ? "" : String(p.defaultTarget),
       order: String(p.order ?? 0),
+      productIds: (p.productIds ?? []).map(String),
     });
     setParamError("");
     setParamDialogOpen(true);
@@ -237,6 +288,7 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
             defaultMax: paramForm.defaultMax === "" ? null : Number(paramForm.defaultMax),
             defaultTarget: paramForm.defaultTarget === "" ? null : Number(paramForm.defaultTarget),
             order: parseInt(paramForm.order, 10) || 0,
+            productIds: paramForm.productIds,
           }),
         }
       );
@@ -270,17 +322,40 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <Package size={16} className="text-slate-400" />
+        {/* Leaves only, grouped under their type. A spec sheet belongs to the
+            thing that is actually sampled — Super, or نخالة — never to the
+            category "طحين". */}
         <Combobox
           triggerClassName={SELECT_CLASS + " w-52"}
           value={productId}
           onChange={setProductId}
-          options={products.map((p) => ({ value: p._id, label: (lang === "ar" && p.nameAr) || p.name }))}
+          searchPlaceholder={t("Search products…", "ابحث عن صنف…")}
+          options={productPickerOptions(products, lang)}
         />
+        {/* Which type this grade belongs to, since the trigger shows only the
+            grade's own name once it is chosen. */}
+        {parentOfSelected && (
+          <span className="text-xs text-slate-400 whitespace-nowrap">
+            {t("in", "ضمن")}{" "}
+            <bdi className="text-slate-600">
+              {(lang === "ar" && parentOfSelected.nameAr) || parentOfSelected.name}
+            </bdi>
+          </span>
+        )}
+        {/* Visible without opening the edit dialog: whether an ORDER of this
+            product waits for the lab. The spec sheet below is still worth
+            filling in either way — wheat is tested routinely as incoming-grain
+            QC even though a wheat order carries no lab gate. */}
+        {selectedProduct && selectedProduct.orderRequiresLabTest === false && (
+          <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 whitespace-nowrap">
+            {t("Orders skip the lab stage", "الطلبيات تتخطّى مرحلة المختبر")}
+          </span>
+        )}
         {selectedProduct && (
           <>
             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => openRenameProduct(selectedProduct)}>
               <Pencil size={13} />
-              {t("Rename", "إعادة تسمية")}
+              {t("Edit", "تعديل")}
             </Button>
             <Button variant="outline" size="sm" className="text-red-500 hover:bg-red-50 hover:text-red-600"
               onClick={() => removeProduct(selectedProduct)}>
@@ -294,10 +369,63 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
             "الحدود المعروضة هي المطبَّقة على هذا الصنف. الحقل الفارغ يعني بدون حد."
           )}
         </span>
-        <Button variant="outline" size="sm" className="ms-auto gap-1.5" onClick={openAddProduct}>
+        {/* Two buttons, because they make two different things. One list that
+            mixed "طحين" with "Super" is how the catalogue got into the state
+            this screen now has to express. */}
+        <Button variant="outline" size="sm" className="ms-auto gap-1.5" onClick={() => openAddProduct("")}>
           <Plus size={14} />
-          {t("New product", "صنف جديد")}
+          {t("New type", "نوع منتج جديد")}
         </Button>
+        <Button
+          variant="outline" size="sm" className="gap-1.5"
+          disabled={productTypes.length === 0}
+          onClick={() => openAddProduct(parentOfSelected?._id ?? selectedProduct?._id ?? productTypes[0]?._id ?? "")}
+        >
+          <Plus size={14} />
+          {t("New grade", "صنف جديد")}
+        </Button>
+      </div>
+
+      {/* The catalogue's own shape, which the picker above can only hint at.
+          Without it there is no screen that answers "what types exist and what
+          is under each" — the question this whole two-level change was made
+          to make askable. */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-3">
+        <div className="flex flex-wrap gap-x-6 gap-y-2">
+          {productTypes.map((type) => {
+            const grades = products.filter((p) => p.parentId === type._id);
+            return (
+              <div key={type._id} className="min-w-40">
+                <p className="text-xs font-medium text-slate-700 flex items-center gap-1.5">
+                  <bdi>{(lang === "ar" && type.nameAr) || type.name}</bdi>
+                  {type.orderRequiresLabTest === false && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 whitespace-nowrap">
+                      {t("no lab stage", "بلا مرحلة مختبر")}
+                    </span>
+                  )}
+                  <button
+                    onClick={() => openRenameProduct(type)}
+                    className="text-slate-300 hover:text-sky-600 cursor-pointer"
+                    title={t("Edit type", "تعديل النوع")}
+                  >
+                    <Pencil size={11} />
+                  </button>
+                </p>
+                {grades.length ? (
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    <bdi>
+                      {grades.map((g) => (lang === "ar" && g.nameAr) || g.name).join("، ")}
+                    </bdi>
+                  </p>
+                ) : (
+                  <p className="text-xs text-slate-300 mt-0.5">
+                    {t("sold as itself — no grades", "يُباع كما هو — بلا أصناف")}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {error && (
@@ -435,6 +563,23 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
                   {(p.defaultMin != null || p.defaultMax != null) && ` — ${p.defaultMin ?? "–"} to ${p.defaultMax ?? "–"}`}
                   {p.defaultTarget != null && ` · ${t("target", "الهدف")} ${p.defaultTarget}`}
                 </p>
+                {/* Scope, on the row — otherwise the only way to find out
+                    which products a test belongs to is to open it. */}
+                <p className="text-xs text-slate-400 truncate">
+                  {!p.productIds?.length ? (
+                    <span className="text-slate-400">{t("All products", "كل الأصناف")}</span>
+                  ) : (
+                    <span className="text-sky-700">
+                      {p.productIds
+                        .map((id) => {
+                          const pr = products.find((x) => x._id === String(id));
+                          return pr ? (lang === "ar" && pr.nameAr) || pr.name : null;
+                        })
+                        .filter(Boolean)
+                        .join("، ")}
+                    </span>
+                  )}
+                </p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <button onClick={() => openEditParam(p)} className="text-xs text-sky-600 hover:underline cursor-pointer">
@@ -455,7 +600,11 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
       <Dialog open={productDialogOpen} onOpenChange={(o) => { if (!o) { setProductDialogOpen(false); setEditingProduct(null); } }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>{editingProduct ? t("Rename product", "إعادة تسمية الصنف") : t("New product", "صنف جديد")}</DialogTitle>
+            <DialogTitle>
+              {editingProduct
+                ? productForm.parentId ? t("Edit grade", "تعديل الصنف") : t("Edit product type", "تعديل نوع المنتج")
+                : productForm.parentId ? t("New grade", "صنف جديد") : t("New product type", "نوع منتج جديد")}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5">
@@ -466,6 +615,85 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
               <Label>{t("Arabic name", "الاسم بالعربية")}</Label>
               <Input value={productForm.nameAr} onChange={(e) => setProductForm((p) => ({ ...p, nameAr: e.target.value }))} />
             </div>
+
+            {/* Which type a grade belongs to. Fixed once created: moving a
+                grade between types would change the spec sheet it resolves
+                and, if the two types disagree about the lab, the route its
+                future orders take — neither of which should happen as a side
+                effect of a rename dialog. */}
+            {productForm.parentId && (
+              <div className="space-y-1.5">
+                <Label>{t("Product type", "نوع المنتج")} *</Label>
+                {editingProduct ? (
+                  <p className="text-sm text-slate-600 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <bdi>
+                      {(() => {
+                        const parent = products.find((x) => x._id === productForm.parentId);
+                        return parent ? (lang === "ar" && parent.nameAr) || parent.name : "—";
+                      })()}
+                    </bdi>
+                  </p>
+                ) : (
+                  <Combobox
+                    triggerClassName={SELECT_CLASS + " w-full"}
+                    value={productForm.parentId}
+                    onChange={(v) => setProductForm((f) => ({ ...f, parentId: v }))}
+                    options={productTypes.map((x) => ({
+                      value: x._id,
+                      label: (lang === "ar" && x.nameAr) || x.name,
+                    }))}
+                  />
+                )}
+                <p className="text-xs text-slate-400">
+                  {t(
+                    "A grade inherits its type's lab rule — it cannot be set separately.",
+                    "يرث الصنف قاعدة الفحص من نوعه — ولا تُضبط له على حدة."
+                  )}
+                </p>
+              </div>
+            )}
+
+            {/* The flag that decides a whole stage of the approval chain, so it
+                is a labelled statement with its consequence spelled out rather
+                than a bare switch. Only on a TYPE: the decision is "flour is
+                tested, bran is not", which is not a sentence about Super. */}
+            {!productForm.parentId && (
+            <label className="flex items-start gap-2.5 rounded-lg border border-slate-200 px-3 py-2.5 cursor-pointer hover:bg-slate-50">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 accent-sky-600 cursor-pointer"
+                checked={productForm.orderRequiresLabTest}
+                onChange={(e) => setProductForm((p) => ({ ...p, orderRequiresLabTest: e.target.checked }))}
+              />
+              <span className="text-sm">
+                <span className="font-medium text-slate-800">
+                  {t("Orders need a lab test", "الطلبيات تخضع للفحص المخبري")}
+                </span>
+                <span className="block text-xs text-slate-500 mt-0.5">
+                  {productForm.orderRequiresLabTest
+                    ? t(
+                        "An order of this product stops at the lab for results before the General Manager signs it off.",
+                        "تتوقّف طلبية هذا الصنف عند المختبر لإدخال النتائج قبل اعتماد المدير العام."
+                      )
+                    : t(
+                        "An order of this product skips the lab stage entirely — from the Technical Manager straight to the General Manager's sign-off. The lab can still test samples of it as routine QC.",
+                        "تتخطّى طلبية هذا الصنف مرحلة المختبر تمامًا — من المدير التقني إلى اعتماد المدير العام مباشرة. ويبقى بإمكان المختبر فحص عيّناته كفحص دوري."
+                      )}
+                </span>
+                {/* Already-raised orders keep the route they were created
+                    with — the one thing a person flipping this needs to know. */}
+                {editingProduct && (
+                  <span className="block text-xs text-amber-700 mt-1">
+                    {t(
+                      "Applies to new orders only, and to every grade of this type. Orders already in progress keep the route they were raised with.",
+                      "ينطبق على الطلبيات الجديدة فقط، وعلى كل أصناف هذا النوع. والطلبيات الجارية تحتفظ بالمسار الذي أُنشئت به."
+                    )}
+                  </span>
+                )}
+              </span>
+            </label>
+            )}
+
             {productError && (
               <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{productError}</p>
             )}
@@ -535,6 +763,97 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
                   onChange={(e) => setParamForm((f) => ({ ...f, order: e.target.value }))} />
               </div>
             </div>
+
+            {/* Which products this test belongs to.
+                Nothing ticked means every product — the permissive default,
+                and what every test did before the catalogue was scoped. It is
+                said in words rather than left to be inferred from an empty
+                box, because "none" and "all" look identical here. */}
+            <div className="space-y-1.5">
+              <Label>{t("Applies to", "ينطبق على")}</Label>
+              <p className="text-xs text-slate-500">
+                {paramForm.productIds.length === 0
+                  ? t(
+                      "Nothing selected — this test applies to every product.",
+                      "لم يُحدَّد شيء — هذا الفحص ينطبق على جميع الأصناف."
+                    )
+                  : t(
+                      `Shown only for the ${paramForm.productIds.length} selected product(s).`,
+                      `يظهر فقط للأصناف المحدَّدة (${paramForm.productIds.length}).`
+                    )}
+              </p>
+              {/* Types first, each with its grades indented under it.
+                  Ticking a TYPE covers every grade of it, now and in future —
+                  "these are the flour tests" is one statement about flour, and
+                  making QA tick eight grades to say it is eight chances to
+                  miss one and eight rows to revisit when a ninth appears.
+                  Individual grades stay tickable for the rarer case of a test
+                  that genuinely applies to only one of them. */}
+              <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-100">
+                {productTypes.map((type) => {
+                  const grades = products.filter((pr) => pr.parentId === type._id);
+                  const rows = [{ row: type, isType: true }, ...grades.map((g) => ({ row: g, isType: false }))];
+                  const typeTicked = paramForm.productIds.includes(type._id);
+                  return (
+                    <div key={type._id}>
+                      {rows.map(({ row, isType }) => {
+                        const on = paramForm.productIds.includes(row._id);
+                        // A grade covered by its ticked type is shown as
+                        // covered, and disabled — unticking it would not
+                        // narrow anything, so offering the click would lie.
+                        const covered = !isType && typeTicked;
+                        return (
+                          <label
+                            key={row._id}
+                            className={
+                              "flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-slate-50 " +
+                              (isType ? "font-medium text-slate-800" : "ps-9 text-slate-600") +
+                              (covered ? " opacity-60 cursor-default" : " cursor-pointer")
+                            }
+                          >
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 accent-sky-600 cursor-pointer disabled:cursor-default"
+                              checked={on || covered}
+                              disabled={covered}
+                              onChange={() =>
+                                setParamForm((f) => ({
+                                  ...f,
+                                  productIds: on
+                                    ? f.productIds.filter((x) => x !== row._id)
+                                    : [...f.productIds, row._id],
+                                }))
+                              }
+                            />
+                            <span><bdi>{(lang === "ar" && row.nameAr) || row.name}</bdi></span>
+                            {isType && grades.length === 0 && (
+                              <span className="text-xs text-slate-400">
+                                {t("(no grades)", "(بلا أصناف)")}
+                              </span>
+                            )}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+                {products.length === 0 && (
+                  <p className="text-sm text-slate-400 py-4 text-center">
+                    {t("No products yet.", "لا توجد أصناف بعد.")}
+                  </p>
+                )}
+              </div>
+              {paramForm.productIds.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setParamForm((f) => ({ ...f, productIds: [] }))}
+                  className="text-xs text-sky-600 hover:underline cursor-pointer"
+                >
+                  {t("Clear — apply to every product", "إلغاء التحديد — تطبيق على كل الأصناف")}
+                </button>
+              )}
+            </div>
+
             {paramError && (
               <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{paramError}</p>
             )}

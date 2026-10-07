@@ -3,12 +3,11 @@ import { connectDB } from "@/lib/mongoose";
 import { requireModule, requireRole } from "@/lib/requireSession";
 import { badRequest, badStrictStr, notFound, oid, readJson, str, strictStr } from "@/lib/apiHelpers";
 import { visibilityFilter, andFilters, canEdit, type Actor, type OrderLike } from "@/lib/salesWorkflow";
+import { buildOrderLines } from "@/lib/salesOrderLines";
 import { liveDelegationRoles, orderPermissions } from "@/lib/salesAuth";
 import SalesOrder from "@/models/SalesOrder";
 import LabCustomer from "@/models/LabCustomer";
-import LabProduct from "@/models/LabProduct";
 import LabSample from "@/models/LabSample";
-import { BAG_WEIGHTS } from "@/types";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -111,11 +110,12 @@ export async function PUT(req: NextRequest, { params }: Params) {
     const customerId = oid(body.customerId);
     if (!customerId) return badRequest("Invalid customerId");
     const customer = (await LabCustomer.findOne({ _id: customerId, isActive: true })
-      .select("name nameAr").lean()) as { name?: string; nameAr?: string } | null;
+      .select("name nameAr salesRepName").lean()) as { name?: string; nameAr?: string; salesRepName?: string } | null;
     if (!customer) return badRequest("Unknown customer");
     update.customerId = customerId;
     update.customer = customer.name || "";
     update.customerAr = customer.nameAr || "";
+    update.salesRepName = customer.salesRepName || "";
   }
 
   if ("orderDate" in body) {
@@ -142,11 +142,6 @@ export async function PUT(req: NextRequest, { params }: Params) {
     if (!addressCheck.ok) return badStrictStr(addressCheck);
     update.customerAddress = addressCheck.value;
   }
-  if ("salesRepName" in body) {
-    const repCheck = strictStr(body.salesRepName, 120, "Sales rep name");
-    if (!repCheck.ok) return badStrictStr(repCheck);
-    update.salesRepName = repCheck.value;
-  }
   if ("agentName" in body) {
     const agentCheck = strictStr(body.agentName, 120, "Agent name");
     if (!agentCheck.ok) return badStrictStr(agentCheck);
@@ -157,65 +152,49 @@ export async function PUT(req: NextRequest, { params }: Params) {
       body.paymentMethod === "cash" || body.paymentMethod === "deferred" ? body.paymentMethod : "";
   }
 
-  if (Array.isArray(body.lines)) {
-    if (!body.lines.length) return badRequest("An order needs at least one line");
-    if (body.lines.length > 50) return badRequest("An order cannot have more than 50 lines");
+  /**
+   * Changing the lines can change whether the order needs the lab at all — a
+   * coordinator swapping flour for bran at stage 2 turns a nine-step route
+   * into an eight-step one. So `labRequired` and the stage-6 step have to be
+   * rewritten together with the lines, not left behind pointing at the old
+   * product mix.
+   *
+   * Safe to rewrite that step unconditionally: `canEdit` already capped
+   * editing at stage 2, four stages before anyone can touch the lab slot, so
+   * there is no signature here to overwrite.
+   */
+  let labRequired: boolean | null = null;
+  if (body.lines !== undefined) {
+    const built = await buildOrderLines(body.lines);
+    if (!built.ok) return built.error;
 
-    const lines: Record<string, unknown>[] = [];
-    let totalBags = 0;
-    let totalWeightKg = 0;
-    let totalBonusBags = 0;
-    let totalBonusWeightKg = 0;
-
-    for (const raw of body.lines) {
-      const row = raw as { productId?: unknown; bagWeightKg?: unknown; bagCount?: unknown; note?: unknown; bonusBags?: unknown };
-      const productId = oid(row.productId);
-      if (!productId) return badRequest("Every line needs a valid productId");
-
-      const bagWeightKg = Number(row.bagWeightKg);
-      if (!(BAG_WEIGHTS as readonly number[]).includes(bagWeightKg)) {
-        return badRequest(`Bag weight must be one of ${BAG_WEIGHTS.join(", ")} kg`);
-      }
-      const bagCount = Number(row.bagCount);
-      if (!Number.isInteger(bagCount) || bagCount < 1) {
-        return badRequest("Every line needs a whole bag count of at least 1");
-      }
-      const noteCheck = strictStr(row.note, 500, "Line note");
-      if (!noteCheck.ok) return badStrictStr(noteCheck);
-
-      const bonusBags = Number(row.bonusBags) || 0;
-      if (!Number.isInteger(bonusBags) || bonusBags < 0) {
-        return badRequest("Bonus bags must be a whole number of 0 or more");
-      }
-
-      const product = (await LabProduct.findOne({ _id: productId, isActive: true })
-        .select("name nameAr").lean()) as { name?: string; nameAr?: string } | null;
-      if (!product) return badRequest("Unknown product on one of the lines");
-
-      const lineWeightKg = bagWeightKg * bagCount;
-      totalBags += bagCount;
-      totalWeightKg += lineWeightKg;
-      totalBonusBags += bonusBags;
-      totalBonusWeightKg += bonusBags * bagWeightKg;
-      lines.push({
-        productId, product: product.name || "", productAr: product.nameAr || "",
-        bagWeightKg, bagCount, lineWeightKg, note: noteCheck.value, bonusBags,
-      });
-    }
-
-    update.lines = lines;
-    update.totalBags = totalBags;
-    update.totalWeightKg = totalWeightKg;
-    update.totalBonusBags = totalBonusBags;
-    update.totalBonusWeightKg = totalBonusWeightKg;
+    update.lines = built.value.lines;
+    update.labRequired = built.value.labRequired;
+    update.totalBags = built.value.totalBags;
+    update.totalWeightKg = built.value.totalWeightKg;
+    update.totalBonusBags = built.value.totalBonusBags;
+    update.totalBonusWeightKg = built.value.totalBonusWeightKg;
+    labRequired = built.value.labRequired;
   }
 
   // Re-assert the precondition in the write itself: between the read above and
   // this update, someone may have approved.
   const updated = await SalesOrder.findOneAndUpdate(
     { _id: id, isActive: true, status: "Pending", currentStageIndex: 2 },
-    { $set: update },
-    { new: true }
+    {
+      $set: {
+        ...update,
+        // Keyed on `kind`, not on the index or the key, so a future reshuffle
+        // of the stage table moves this with it.
+        ...(labRequired === null
+          ? {}
+          : { "steps.$[lab].status": labRequired ? "pending" : "skipped" }),
+      },
+    },
+    {
+      new: true,
+      ...(labRequired === null ? {} : { arrayFilters: [{ "lab.kind": "data_entry" }] }),
+    }
   ).lean();
 
   if (!updated) {

@@ -31,6 +31,7 @@ const ENTITY: Record<string, { en: string; ar: string }> = {
   delegation:  { en: "Delegation", ar: "تفويض" },
   user:        { en: "User", ar: "مستخدم" },
   lab_sample:  { en: "Lab sample", ar: "عيّنة" },
+  rejection_reason: { en: "Rejection reason", ar: "سبب رفض" },
 };
 
 const ACTION: Record<string, { en: string; ar: string }> = {

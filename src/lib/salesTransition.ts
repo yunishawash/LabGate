@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 import SalesOrder from "@/models/SalesOrder";
 import User from "@/models/User";
 import { writeAudit } from "@/lib/audit";
-import { authorityFor, stageComplete, nextStageIndex, stagesAt, type Actor, type OrderLike, type StageDef } from "@/lib/salesWorkflow";
+import { authorityFor, stageComplete, nextLiveStageIndex, stagesAt, type Actor, type OrderLike, type StageDef } from "@/lib/salesWorkflow";
 import { liveDelegationRoles, isRoleUnavailable } from "@/lib/salesAuth";
 import { ROLE_LABELS, type UserRole } from "@/types";
 
@@ -139,7 +139,18 @@ export async function claimAndAdvance(
   let posted = false;
 
   if (stageComplete(like, stage.index)) {
-    const next = nextStageIndex(stage.index);
+    /**
+     * `nextLiveStageIndex`, not `nextStageIndex`: an order with no lab-tested
+     * product stores stage 6 as `skipped`, and the Technical Manager's
+     * approval at stage 5 must land it on stage 7 rather than parking it on a
+     * stage whose only step is already closed — which would stall it forever,
+     * since nothing can claim a step that is not pending.
+     *
+     * Safe to ask here, and only here: the claim above required
+     * `status: "Pending"`, so `like` cannot be a rejected order, whose
+     * never-reached steps are also marked `skipped`.
+     */
+    const next = nextLiveStageIndex(like, stage.index);
 
     if (next === null) {
       // Stage 8: the weight and the posting land in one write, so an order can
@@ -210,7 +221,11 @@ export async function rejectOrder(
   order: OrderLike,
   actor: { _id: mongoose.Types.ObjectId; name: string; role: string },
   reason: string,
-  actedForRole: string
+  actedForRole: string,
+  /** Set when the reason came from the managed list. `reason` above is still
+   *  the full human-readable text and is what every existing reader prints;
+   *  these two only add the machine-groupable identity behind it. */
+  picked: { reasonId?: mongoose.Types.ObjectId | null; reasonLabel?: string } = {}
 ): Promise<Record<string, unknown> | TransitionError> {
   const now = new Date();
   const stageKey = stagesAt(order.currentStageIndex)[0]?.key ?? "";
@@ -225,6 +240,8 @@ export async function rejectOrder(
           stageKey,
           role: actedForRole || actor.role,
           reason,
+          reasonId: picked.reasonId ?? null,
+          reasonLabel: picked.reasonLabel ?? "",
           byId: actor._id,
           byName: actor.name,
           at: now,

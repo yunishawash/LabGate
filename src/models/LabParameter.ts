@@ -19,6 +19,13 @@ import mongoose, { Schema, Document } from "mongoose";
  * `defaultTarget` is the *recommended* value (the workbook's "Target"):
  * not a pass/fail bound, but the ideal the process aims at. It drives the
  * deviation-from-target metric and the chart's target line.
+ *
+ * `productIds` scopes the test to the products it actually applies to. The
+ * catalogue used to be flat and plant-wide, which was fine while the only
+ * products were eight flour grades sharing one test sheet. It stopped being
+ * fine when wheat arrived: "Falling Number" is meaningless on raw grain and
+ * "Hectolitre Weight" is meaningless on flour, yet a flat catalogue puts both
+ * on both screens and leaves the technician to know which rows to ignore.
  */
 export interface ILabParameterDoc extends Document {
   name: string;
@@ -28,6 +35,18 @@ export interface ILabParameterDoc extends Document {
   defaultMin: number | null;
   defaultMax: number | null;
   defaultTarget: number | null;
+  /**
+   * The products this test applies to. EMPTY MEANS EVERY PRODUCT — the
+   * permissive default, so a parameter added without a thought behaves
+   * exactly as the flat catalogue did and no existing screen loses a row.
+   *
+   * The eleven flour parameters that predate this field are therefore
+   * backfilled with the eight flour grades explicitly (see
+   * `src/scripts/backfill-product-catalog.ts`): leaving them empty would be
+   * read as "applies to wheat too", which is the one thing this field exists
+   * to prevent.
+   */
+  productIds: mongoose.Types.ObjectId[];
   order: number;
   isActive: boolean;
   createdAt: Date;
@@ -43,6 +62,7 @@ const LabParameterSchema = new Schema<ILabParameterDoc>(
     defaultMin:    { type: Number, default: null },
     defaultMax:    { type: Number, default: null },
     defaultTarget: { type: Number, default: null },
+    productIds:    [{ type: Schema.Types.ObjectId, ref: "LabProduct" }],
     order:         { type: Number, default: 0 },
     isActive:   { type: Boolean, default: true },
   },
@@ -50,6 +70,9 @@ const LabParameterSchema = new Schema<ILabParameterDoc>(
 );
 
 LabParameterSchema.index({ order: 1 });
+// The specs screen and the sample form both ask "which tests for THIS
+// product" on every load — that query is `productIds: id` OR `productIds` empty.
+LabParameterSchema.index({ productIds: 1 });
 
 export default mongoose.models.LabParameter ||
   mongoose.model<ILabParameterDoc>("LabParameter", LabParameterSchema);

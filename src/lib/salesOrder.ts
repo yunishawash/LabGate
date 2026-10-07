@@ -25,10 +25,19 @@ export async function createSalesOrder(
   const seq = await nextSequence(`order-${year}`);
   const orderNumber = `ORD-${year}-${String(seq).padStart(6, "0")}`;
 
+  /**
+   * The chain is built from the order's own `labRequired`, which the caller
+   * derived from the products on the lines. Read off `data` rather than taken
+   * as a second argument so the flag and the step array it produces can never
+   * be passed in disagreeing with each other.
+   */
+  const labRequired = data.labRequired !== false;
+
   return SalesOrder.create({
     ...data,
+    labRequired,
     orderNumber,
-    steps: buildInitialSteps(actor, now),
+    steps: buildInitialSteps(actor, now, { labRequired }),
     // Stage 1 is complete at creation, so a new order is already waiting on the
     // sales manager.
     currentStageIndex: 2,

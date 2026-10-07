@@ -167,7 +167,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
     update.nameKey = nameKey;
   }
   for (const [field, max] of [
-    ["nameAr", 200], ["code", 40], ["phone", 40], ["contactName", 120],
+    ["nameAr", 200], ["code", 40], ["phone", 40], ["contactName", 120], ["salesRepName", 120],
   ] as const) {
     if (field in body) update[field] = str(body[field], max);
   }

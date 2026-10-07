@@ -70,11 +70,23 @@ export function QueuePage({ kind }: { kind: QueueKind }) {
     },
     signOff: {
       title: t("Results Sign-off", "اعتماد النتائج"),
+      /**
+       * Said as "the last gate before the weighbridge" rather than as "lab
+       * results awaiting signature", because stage 7 now holds two kinds of
+       * order: flour, with results to read, and bran/germ/semolina/wheat,
+       * which carry no lab test and arrive here with nothing to read. Calling
+       * the whole page "lab results" would make every untested order on it
+       * look like one whose results had gone missing.
+       *
+       * It also no longer claims two signatures. Stage 7 has held a single
+       * slot — the General Manager's — since the client reduced it; the old
+       * wording was describing a gate that no longer exists.
+       */
       sub: t(
-        "Lab results awaiting signature. Both the General Manager and the Technical Manager must sign.",
-        "نتائج المختبر التي تنتظر التوقيع. يجب أن يوقّع المدير العام والمدير التقني كلاهما."
+        "The General Manager's last signature before the weighbridge. Flour orders arrive with lab results to read; bran, germ, semolina and wheat carry no lab test.",
+        "توقيع المدير العام الأخير قبل الميزان. طلبيات الطحين تصل ومعها نتائج المختبر؛ أمّا النخالة والجيرم والسميد والقمح فلا تخضع للفحص."
       ),
-      empty: t("No results are waiting for signature.", "لا توجد نتائج تنتظر التوقيع."),
+      empty: t("Nothing is waiting for signature.", "لا يوجد شيء ينتظر التوقيع."),
     },
     rejections: {
       title: t("Rejections", "المرفوضة"),
@@ -163,8 +175,17 @@ export function QueuePage({ kind }: { kind: QueueKind }) {
                     </p>
                   </div>
 
-                  {o.labOverallStatus && kind === "signOff" && (
-                    <QcStatusBadge status={o.labOverallStatus} size="xs" />
+                  {kind === "signOff" && (
+                    o.labOverallStatus ? (
+                      <QcStatusBadge status={o.labOverallStatus} size="xs" />
+                    ) : o.labRequired === false ? (
+                      /* Without this the row is simply missing its QC badge,
+                         which reads as results that failed to arrive — on the
+                         one page whose entire job is signing results off. */
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 whitespace-nowrap">
+                        {t("No lab test", "لا يخضع للفحص")}
+                      </span>
+                    ) : null
                   )}
 
                   {/* On the sign-off page the useful fact is not "it is waiting"

@@ -33,6 +33,22 @@ export async function PUT(req: NextRequest, { params }: Params) {
   if ("defaultMax" in body) update.defaultMax = numOrNull(body.defaultMax);
   if ("defaultTarget" in body) update.defaultTarget = numOrNull(body.defaultTarget);
   if ("order" in body) update.order = numOrNull(body.order) ?? 0;
+  /**
+   * Re-scoping a test does not touch any sample already recorded — a stored
+   * `ILabSampleResult` carries its own parameter name, unit and limits, frozen
+   * at test time. It only changes which rows the specs screen and the entry
+   * form offer from now on.
+   *
+   * An empty array is a meaningful value here, not an omission: it means
+   * "applies to every product". So this branches on the key being present,
+   * like every other field above, and never on the array being non-empty.
+   */
+  if ("productIds" in body) {
+    const ids = Array.isArray(body.productIds) ? body.productIds : [];
+    const parsed = ids.map((v: unknown) => oid(v));
+    if (parsed.some((v: unknown) => v === null)) return badRequest("Invalid productId in productIds");
+    update.productIds = Array.from(new Map(parsed.map((v) => [String(v), v])).values());
+  }
 
   // A rename can collide with another row's unique name. Surface that as a
   // readable 409 rather than letting a raw E11000 escape as a 500.

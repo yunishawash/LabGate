@@ -63,7 +63,8 @@ export async function GET(req: NextRequest) {
           t("Date", "التاريخ"), t("Bags", "الأكياس"), t("Ordered (t)", "المطلوب (طن)"),
           t("Status", "الحالة"), t("Stage", "المرحلة"), t("Raised by", "أنشأها"),
           t("Actual (t)", "الفعلي (طن)"), t("Variance %", "الفرق %"),
-          t("Lab", "المختبر"), t("Rejected by", "رفضها"), t("Reason", "السبب"),
+          t("Lab", "المختبر"), t("Variance reason", "أسباب فرق الوزن"),
+          t("Rejected by", "رفضها"), t("Reason", "السبب"),
         ],
         rows: orders.map((o) => {
           const d = o as unknown as Record<string, never>;
@@ -83,6 +84,9 @@ export async function GET(req: NextRequest) {
               : null,
             (d.variancePct as unknown as number) ?? null,
             (d.labOverallStatus as string) ?? "",
+            // Empty on a variance inside tolerance — nothing was demanded —
+            // which is itself the answer to "which of these were explained".
+            (d.varianceReason as string) ?? "",
             r.byName ?? "",
             r.reason ?? "",
           ];
@@ -92,6 +96,7 @@ export async function GET(req: NextRequest) {
         name: t("Lines", "البنود"),
         headers: [
           t("Order", "الطلبية"), t("Customer", "الزبون"), t("Product", "الصنف"),
+          t("Packaging", "التعبئة"),
           t("Bag (kg)", "الكيس (كغم)"), t("Bags", "الأكياس"), t("Weight (t)", "الوزن (طن)"),
         ],
         // One row per line, not per order: a per-product tonnage question cannot
@@ -99,16 +104,24 @@ export async function GET(req: NextRequest) {
         rows: orders.flatMap((o) => {
           const d = o as unknown as Record<string, never>;
           const lines = (d.lines ?? []) as unknown as {
-            product: string; productAr?: string; bagWeightKg: number; bagCount: number; lineWeightKg: number;
+            product: string; productAr?: string; packaging?: string;
+            bagWeightKg: number | null; bagCount: number | null; lineWeightKg: number;
           }[];
-          return lines.map((l) => [
-            d.orderNumber as string,
-            (lang === "ar" && (d.customerAr as string)) || (d.customer as string) || "",
-            (lang === "ar" && l.productAr) || l.product || "",
-            l.bagWeightKg,
-            l.bagCount,
-            Number((l.lineWeightKg / 1000).toFixed(3)),
-          ]);
+          return lines.map((l) => {
+            const bulk = l.packaging === "bulk";
+            return [
+              d.orderNumber as string,
+              (lang === "ar" && (d.customerAr as string)) || (d.customer as string) || "",
+              (lang === "ar" && l.productAr) || l.product || "",
+              bulk ? t("Bulk", "صبّ") : t("Bagged", "أكياس"),
+              // `null`, not 0. A poured line has no sack size and no count, and
+              // a zero in a spreadsheet gets summed, averaged and charted as
+              // though it were a measurement.
+              bulk ? null : l.bagWeightKg ?? null,
+              bulk ? null : l.bagCount ?? null,
+              Number((l.lineWeightKg / 1000).toFixed(3)),
+            ];
+          });
         }),
       },
     ];
@@ -306,8 +319,9 @@ export async function GET(req: NextRequest) {
       const d = o as unknown as Record<string, never>;
       const labByProduct = labByOrder.get(String(d._id)) ?? new Map<string, string>();
       const lines = (d.lines ?? []) as unknown as {
-        productId: unknown; product: string; productAr?: string;
-        bagWeightKg: number; bagCount: number; lineWeightKg: number; actualWeightKg: number | null;
+        productId: unknown; product: string; productAr?: string; packaging?: string;
+        bagWeightKg: number | null; bagCount: number | null;
+        lineWeightKg: number; actualWeightKg: number | null;
       }[];
       if (!lines.length) continue;
 
@@ -320,8 +334,12 @@ export async function GET(req: NextRequest) {
           rows.length === startRow ? isoDate(d.orderDate) : "",
           rows.length === startRow ? isoDate(d.deliveryDate) : "",
           (lang === "ar" && l.productAr) || l.product || "",
-          `${l.bagWeightKg} kg`,
-          l.bagCount,
+          // Same rule as the Lines sheet: "صبّ" rather than "null kg", and no
+          // zero where there is nothing to count.
+          l.packaging === "bulk"
+            ? t("Bulk", "صبّ")
+            : l.bagWeightKg != null ? `${l.bagWeightKg} kg` : "",
+          l.packaging === "bulk" ? null : l.bagCount ?? null,
           Number((l.lineWeightKg / 1000).toFixed(3)),
           l.actualWeightKg != null ? Number((l.actualWeightKg / 1000).toFixed(3)) : null,
           diffKg != null ? Number((diffKg / 1000).toFixed(3)) : null,

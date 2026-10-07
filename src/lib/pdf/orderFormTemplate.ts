@@ -1,6 +1,8 @@
 import fs from "fs";
 import path from "path";
 import { SALES_STAGES, type StageDef } from "@/lib/salesWorkflow";
+import { esc, fmtDate, fmtDateTime, fontFaces } from "@/lib/pdf/shared";
+import { buildWeighCertificateBody, weighCertificateStyles } from "@/lib/pdf/weighCertificateTemplate";
 import {
   ROLE_LABELS,
   LAB_STATUS_LABELS,
@@ -8,14 +10,18 @@ import {
   type UserRole,
   type LabStatus,
   type LabDecision,
+  type LinePackaging,
 } from "@/types";
 
 /** Shape this template actually reads — a lean SalesOrder plus its steps. */
 export interface OrderFormLine {
   product?: string;
   productAr?: string;
-  bagCount?: number;
-  bagWeightKg?: number;
+  /** Absent on every order printed from before bulk loading existed — all
+   *  bagged, which is what the fallbacks below assume. */
+  packaging?: LinePackaging;
+  bagCount?: number | null;
+  bagWeightKg?: number | null;
   lineWeightKg?: number;
   bonusBags?: number;
   note?: string;
@@ -79,6 +85,24 @@ export interface OrderFormData {
   totalWeightKg?: number;
   actualNetWeightKg?: number | null;
   variancePct?: number | null;
+  /** The weighbridge's justification for the gap — demanded past the
+   *  tolerance, so it is present exactly when the figure needs defending. */
+  varianceReason?: string;
+  weighNote?: string;
+  weighedByName?: string;
+  postedAt?: string | Date | null;
+  /** The load, recorded at the weighbridge. Printed on the certificate page
+   *  this form carries; empty on anything weighed before they existed. */
+  weighDestination?: string;
+  weighVehicleNo?: string;
+  weighCarrier?: string;
+  weighDriver?: string;
+  grossWeightKg?: number | null;
+  tareWeightKg?: number | null;
+  /** False on an order of bran, germ, semolina or wheat: it has no stage 6.
+   *  Absent on every order raised before the field existed, all of them
+   *  flour, which is why a missing value must read as true. */
+  labRequired?: boolean;
 }
 
 /** One audit-log row — the same feed the "History" tab reads, sorted the
@@ -91,63 +115,18 @@ export interface OrderFormHistoryEntry {
   timestamp?: string | Date;
 }
 
+// Re-exported so existing callers keep importing them from here; the bodies
+// now live in ./shared, which both printed documents share.
+export { esc, fmtDate, fmtDateTime, fontFaces };
+
 /** Minimum rows the items table always shows, so a short order still fills
  *  the same box the printed form allots — the whole point of "fixed table
  *  height" from the paper form. */
 const MIN_ITEM_ROWS = 10;
 
-function esc(v: unknown): string {
-  if (v === undefined || v === null) return "";
-  return String(v)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function fmtDate(d?: string | Date | null): string {
-  if (!d) return "";
-  const date = typeof d === "string" ? new Date(d) : d;
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString("en-GB"); // dd/mm/yyyy — matches the footer's own date format
-}
-
-function fmtDateTime(d?: string | Date | null): string {
-  if (!d) return "";
-  const date = typeof d === "string" ? new Date(d) : d;
-  if (Number.isNaN(date.getTime())) return "";
-  return `${date.toLocaleDateString("en-GB")} ${date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
-}
-
 function fmtTons(kg?: number): string {
   if (kg === undefined || kg === null) return "";
   return (kg / 1000).toFixed(3);
-}
-
-let fontFacesCache: string | null = null;
-/** Self-hosted Thmanyah Sans, inlined as base64 so the headless render needs
- *  no filesystem/network reach beyond this one read — Chrome and the
- *  Puppeteer/Playwright PDF path then rasterize from the exact same bytes. */
-function fontFaces(): string {
-  if (fontFacesCache) return fontFacesCache;
-  const dir = path.join(process.cwd(), "public", "fonts");
-  const weights: [string, number][] = [
-    ["thmanyahsans-Regular.woff2", 400],
-    ["thmanyahsans-Medium.woff2", 500],
-    ["thmanyahsans-Bold.woff2", 700],
-    ["thmanyahsans-Black.woff2", 900],
-  ];
-  const faces = weights
-    .map(([file, weight]) => {
-      const p = path.join(dir, file);
-      if (!fs.existsSync(p)) return "";
-      const b64 = fs.readFileSync(p).toString("base64");
-      return `@font-face{font-family:"Thmanyah";src:url(data:font/woff2;base64,${b64}) format("woff2");font-weight:${weight};font-display:swap;}`;
-    })
-    .filter(Boolean)
-    .join("\n");
-  fontFacesCache = faces;
-  return faces;
 }
 
 let logoCache: string | null | undefined;
@@ -173,17 +152,33 @@ function logoDataUri(): string | null {
 }
 
 function itemRows(lines: OrderFormLine[]): string {
-  const rows = lines.map(
-    (l) => `
+  const rows = lines.map((l) => {
+    /**
+     * The quantity column is a bag count on a bagged line and the word "صبّ"
+     * on a poured one. Blank would be wrong twice over: on paper a blank cell
+     * invites someone to write a number into it, and the ordered weight column
+     * beside it already carries the real quantity of a bulk line.
+     *
+     * A bagged line also gains its sack size here ("٢٠٠ × ٥٠ كغم"), which the
+     * form never printed — the weight alone does not tell the warehouse what
+     * to fill.
+     */
+    const bulk = l.packaging === "bulk";
+    const qty = bulk
+      ? "صبّ"
+      : l.bagCount != null
+        ? `${esc(l.bagCount)}${l.bagWeightKg != null ? ` × ${esc(l.bagWeightKg)} كغم` : ""}`
+        : "";
+    return `
       <tr>
         <td class="text-right">${esc(l.productAr || l.product || "")}</td>
-        <td>${l.bagCount ?? ""}</td>
+        <td>${qty}</td>
         <td>${fmtTons(l.lineWeightKg)}</td>
         <td>${l.actualWeightKg != null ? fmtTons(l.actualWeightKg) : ""}</td>
-        <td>${l.bonusBags ? esc(l.bonusBags) : ""}</td>
+        <td>${bulk ? "—" : l.bonusBags ? esc(l.bonusBags) : ""}</td>
         <td class="text-right">${esc(l.note || "")}</td>
-      </tr>`
-  );
+      </tr>`;
+  });
   const blanks = Math.max(0, MIN_ITEM_ROWS - lines.length);
   for (let i = 0; i < blanks; i++) {
     rows.push(`<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td>&nbsp;</td></tr>`);
@@ -194,6 +189,22 @@ function itemRows(lines: OrderFormLine[]): string {
 function stepByKey(steps: OrderFormStep[] | undefined, key: string): OrderFormStep | undefined {
   return steps?.find((s) => s.stageKey === key);
 }
+
+/**
+ * A manager's own words when he approved, under its own heading.
+ *
+ * Distinct from the department note printed above it: "ملاحظات قسم التعبئة" is
+ * what the packing department recorded, where this is what the manager wrote as
+ * he signed. Printing them under one heading would attribute one to the other.
+ */
+function approvalNote(label: string, step: OrderFormStep | undefined): string {
+  if (!step?.note) return "";
+  return `<div class="note-title">${label}</div><div class="note-body">${esc(step.note)}</div>`;
+}
+
+/** Has this slot actually been signed? A pending step has no name to print. */
+const isSigned = (step: OrderFormStep | undefined): boolean =>
+  step?.status === "approved" || step?.status === "completed";
 
 function signatureCell(step: OrderFormStep | undefined): string {
   if (!step?.actedByName) return "";
@@ -246,7 +257,12 @@ function chainState(
 }
 
 /** One signatory line under a chain stage: who, when, and in what capacity. */
-function chainSignatureLine(stage: StageDef, step: OrderFormStep | undefined, indented: boolean): string {
+function chainSignatureLine(
+  stage: StageDef,
+  step: OrderFormStep | undefined,
+  indented: boolean,
+  notApplicable = false
+): string {
   const roleLabel = ROLE_LABELS[stage.role as UserRole]?.ar ?? stage.role;
   const done = step?.status === "approved" || step?.status === "completed";
 
@@ -264,7 +280,9 @@ function chainSignatureLine(stage: StageDef, step: OrderFormStep | undefined, in
     const when = step!.actedAt ? ` <span class="chain-muted">· ${fmtDateTime(step!.actedAt)}</span>` : "";
     body = `<bdi>${esc(step!.actedByName) || '<span class="chain-muted">مكتملة</span>'}</bdi>${capacity}${when}`;
   } else if (step?.status === "skipped") {
-    body = '<span class="chain-muted">لم يتم الوصول إليها</span>';
+    body = notApplicable
+      ? '<span class="chain-muted">أصناف هذه الطلبية لا تخضع للفحص المخبري</span>'
+      : '<span class="chain-muted">لم يتم الوصول إليها</span>';
   } else if (step?.status === "rejected") {
     body = '<span class="chain-rejected-text">رُفضت هنا</span>';
   } else {
@@ -310,8 +328,19 @@ function buildApprovalChainPage(order: OrderFormData): string {
         ? `<span class="chain-badge ${signed === 2 ? "chain-badge-done" : "chain-badge-pending"}">${signed}/2 توقيع</span>`
         : "";
 
+      /**
+       * `skipped` means two different things, and on a printed, signed form the
+       * difference matters more than it does on screen: "لم يتم الوصول إليها"
+       * against the lab on an order of bran reads as an unfinished job on a
+       * document somebody has already signed.
+       */
+      const notApplicable = (stage: StageDef) =>
+        stage.kind === "data_entry" && order.labRequired === false;
+
       const sigLines = stages
-        .map((stage) => chainSignatureLine(stage, stepByKey(steps, stage.key), dual))
+        .map((stage) =>
+          chainSignatureLine(stage, stepByKey(steps, stage.key), dual, notApplicable(stage))
+        )
         .join("\n");
 
       const extra: string[] = [];
@@ -328,7 +357,22 @@ function buildApprovalChainPage(order: OrderFormData): string {
             <span class="chain-muted">الفعلي</span> <span class="bold">${fmtTons(order.actualNetWeightKg)} طن</span>
             <span>(${pct > 0 ? "+" : ""}${pct}%)</span>
           </div>`);
+        // Printed right under the figure it defends — this document is what
+        // gets filed, and a variance with no stated cause on it is the thing
+        // the field was added to prevent.
+        if (order.varianceReason) {
+          extra.push(
+            `<div class="chain-extra chain-variance"><span class="bold">أسباب فرق الوزن:</span> ${esc(
+              order.varianceReason
+            )}</div>`
+          );
+        }
       }
+
+      // "متخطاة" over a stage that was never on this order's route invites the
+      // reader to ask who skipped it. Nobody did.
+      const badgeLabel =
+        state === "skipped" && stages.every(notApplicable) ? "لا تنطبق" : CHAIN_BADGE_LABEL[state];
 
       return `
       <div class="chain-item">
@@ -337,7 +381,7 @@ function buildApprovalChainPage(order: OrderFormData): string {
           <span class="chain-stage-name">${esc(title)}</span>
           <span class="chain-badges">
             ${dualBadge}
-            <span class="chain-badge ${CHAIN_BADGE_CLASS[state]}">${CHAIN_BADGE_LABEL[state]}</span>
+            <span class="chain-badge ${CHAIN_BADGE_CLASS[state]}">${badgeLabel}</span>
           </span>
         </div>
         <div class="chain-body">
@@ -636,10 +680,31 @@ export function buildOrderFormHtml(
   const salesManagerStep = stepByKey(order.steps, "sales_manager_approval");
   const gmStep = stepByKey(order.steps, "general_manager_approval");
   const financeManagerStep = stepByKey(order.steps, "finance_manager_approval");
+  /**
+   * The Technical Manager's slot was never resolved here, so page 1 printed a
+   * blank dotted line where his signature belongs and nothing at all where his
+   * note belongs. Both existed — on page 2's approval chain — which is why the
+   * gap survived: the data was right and only the sheet people actually print
+   * was missing it.
+   */
+  const technicalManagerStep = stepByKey(order.steps, "technical_manager_approval");
 
   const labChunks = paginateLabSamples(labSamples);
   const historyChunks = paginateHistory(history);
-  const totalPages = 2 + labChunks.length + historyChunks.length;
+
+  /**
+   * The weighbridge certificate rides along as a page of this form, so the
+   * sheet filed with the order and the sheet handed to the driver are the
+   * same document rather than two that can drift.
+   *
+   * Only once the load has actually been weighed: before that the certificate
+   * is a page of blanks, and printing it would invite someone to fill it in
+   * by hand — which is the practice this replaces.
+   */
+  const hasCertificate = order.actualNetWeightKg != null;
+  const totalPages = 2 + (hasCertificate ? 1 : 0) + labChunks.length + historyChunks.length;
+  const certPageNo = 3;
+  const afterCert = certPageNo + (hasCertificate ? 1 : 0);
 
   const logo = logoDataUri();
   const logoCell = logo
@@ -653,6 +718,9 @@ export function buildOrderFormHtml(
 <title>Sales Order ${esc(order.orderNumber)}</title>
 <style>
 ${fontFaces()}
+/* The certificate's rules are namespaced under .weigh-cert, so they style its
+   own page and leave this form's tables untouched. */
+${weighCertificateStyles()}
 
 @page { size: A4 portrait; margin: 8mm; }
 * { box-sizing: border-box; }
@@ -747,6 +815,8 @@ td, th { border: 1px solid #000; padding: 4px 6px; }
 .chain-note { font-size: 11px; color: #555; font-style: italic; margin-top: 2px; }
 .chain-extra { margin-top: 4px; font-size: 12px; }
 .chain-weigh span { margin-inline-end: 4px; }
+.variance-note { margin-top: 2mm; border: 1px solid #b45309; border-radius: 3px; padding: 4px 7px; font-size: 11px; color: #7c2d12; background: #fff7ed; white-space: pre-wrap; }
+.chain-variance { border: 1px solid #b45309; border-radius: 4px; padding: 5px 8px; color: #7c2d12; white-space: pre-wrap; }
 .chain-rejection { margin-top: 5mm; border: 1px solid #991b1b; border-radius: 4px; padding: 8px 10px; }
 .chain-rejection-title { font-weight: bold; color: #991b1b; font-size: 13px; }
 .chain-rejection-reason { color: #7f1d1d; font-size: 12px; margin-top: 3px; white-space: pre-wrap; }
@@ -844,7 +914,7 @@ tr, td, th, table, .notes-table, .approval-table, .header-table, .items-table, .
       <thead>
         <tr>
           <th class="col-item">الصنف</th>
-          <th class="col-bags">الكمية (طن)</th>
+          <th class="col-bags">الكمية / التعبئة</th>
           <th class="col-requested">الوزن المطلوب (طن)</th>
           <th class="col-delivered">الوزن الفعلي (طن)</th>
           <th class="col-bonus">البونص (كيس)</th>
@@ -855,6 +925,15 @@ tr, td, th, table, .notes-table, .approval-table, .header-table, .items-table, .
         ${itemRows(order.lines || [])}
       </tbody>
     </table>
+    ${
+      /* Beside the "الوزن الفعلي" column it explains, not two pages later on
+         the approval chain. This sheet is the one that gets printed, signed
+         and filed, and a difference on it with no stated cause is the thing
+         the field was added to prevent. */
+      order.varianceReason
+        ? `<div class="variance-note"><span class="bold">أسباب فرق الوزن:</span> ${esc(order.varianceReason)}</div>`
+        : ""
+    }
   </div>
 
   <div class="payment-row">
@@ -872,10 +951,11 @@ tr, td, th, table, .notes-table, .approval-table, .header-table, .items-table, .
       <td>
         <div class="note-title">ملاحظات دائرة التحصيلات :</div>
         <div class="note-body">${esc(order.collections?.note || "")}</div>
+        ${approvalNote("ملاحظات المدير المالي :", financeManagerStep)}
         <div class="signature-inline">
           <span class="bold">توقيع المدير المالي:</span>
           ${
-            financeManagerStep?.status === "approved" || financeManagerStep?.status === "completed"
+            isSigned(financeManagerStep)
               ? `<span>${signatureCell(financeManagerStep)}</span>`
               : `<span class="dotted-line"></span>`
           }
@@ -884,9 +964,14 @@ tr, td, th, table, .notes-table, .approval-table, .header-table, .items-table, .
       <td>
         <div class="note-title">ملاحظات قسم التعبئة :</div>
         <div class="note-body">${esc(order.packing?.note || "")}</div>
+        ${approvalNote("ملاحظات المدير الفنّي :", technicalManagerStep)}
         <div class="signature-inline">
           <span class="bold">توقيع المدير الفنّي:</span>
-          <span class="dotted-line"></span>
+          ${
+            isSigned(technicalManagerStep)
+              ? `<span>${signatureCell(technicalManagerStep)}</span>`
+              : `<span class="dotted-line"></span>`
+          }
         </div>
       </td>
     </tr>
@@ -910,9 +995,18 @@ tr, td, th, table, .notes-table, .approval-table, .header-table, .items-table, .
   ${footerHtml(2, totalPages)}
 </div>
 
-${buildLabResultsPages(order, labChunks, 3, totalPages)}
+${
+  hasCertificate
+    ? `<div class="page page-break">
+  ${buildWeighCertificateBody(order)}
+  ${footerHtml(certPageNo, totalPages)}
+</div>`
+    : ""
+}
 
-${buildHistoryPages(order, historyChunks, 3 + labChunks.length, totalPages)}
+${buildLabResultsPages(order, labChunks, afterCert, totalPages)}
+
+${buildHistoryPages(order, historyChunks, afterCert + labChunks.length, totalPages)}
 
 </body>
 </html>`;

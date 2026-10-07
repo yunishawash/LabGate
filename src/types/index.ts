@@ -78,6 +78,42 @@ export interface IUser {
 export const BAG_WEIGHTS = [10, 25, 30, 50, 60] as const;
 export type BagWeight = (typeof BAG_WEIGHTS)[number];
 
+/**
+ * How a line leaves the mill.
+ *
+ * `bagged` — filled sacks, counted. `bulk` — صبّ: the customer's truck is
+ * parked at the loading point and the product poured straight in, so there is
+ * nothing to count and the weight is the quantity. Every product supports
+ * both; bran and wheat are simply the ones that usually go out loose.
+ *
+ * ⚠️ Keep the Arabic label as صبّ, not تعبئة. "التعبئة" is already two other
+ * things in this system — the packing department whose notes sit on the same
+ * printed sheet, and the items table's own column heading — so reusing it for
+ * a line's loading method puts one word against three meanings on one page.
+ * (Tried, and reverted, 2026-10-07.)
+ */
+export const LINE_PACKAGING = ["bagged", "bulk"] as const;
+export type LinePackaging = (typeof LINE_PACKAGING)[number];
+
+export const LINE_PACKAGING_LABELS: Record<LinePackaging, { en: string; ar: string }> = {
+  bagged: { en: "Bagged",  ar: "أكياس" },
+  bulk:   { en: "Bulk",    ar: "صبّ" },
+};
+
+/**
+ * How far the weighed load may drift from the order before the weighbridge
+ * operator has to say why, in percent.
+ *
+ * Shared so the dialog's warning, the server's requirement and the printed
+ * certificate cannot disagree about where the line is.
+ *
+ * ⚠️ NOT the variance report's own threshold — that one lists orders beyond
+ * ±1%, a deliberately looser net for "worth a look later". This is the
+ * tighter "explain it now" line, and the two are allowed to differ because
+ * they answer different questions.
+ */
+export const VARIANCE_TOLERANCE_PCT = 0.5;
+
 export type SalesOrderStatus = "Pending" | "Posted" | "Rejected";
 
 export const ORDER_STATUS_LABELS: Record<SalesOrderStatus, { en: string; ar: string }> = {
@@ -162,15 +198,117 @@ export interface ILabParameter {
   defaultMax: number | null;
   /** Recommended value — not a pass/fail bound; drives deviation + chart line. */
   defaultTarget: number | null;
+  /** The products this test applies to. EMPTY MEANS EVERY PRODUCT. */
+  productIds: string[];
   order: number;
   isActive: boolean;
 }
 
+/** One pickable rejection reason. Admin-managed; see models/RejectionReason. */
+export interface IRejectionReason {
+  _id: string;
+  label: string;
+  labelAr?: string;
+  order: number;
+  isActive: boolean;
+}
+
+/**
+ * A row of the product catalogue — a TYPE (نوع منتج) when `parentId` is null,
+ * a GRADE (صنف) of that type otherwise. See models/LabProduct for why the two
+ * share one collection.
+ */
 export interface ILabProduct {
   _id: string;
   name: string;
   nameAr?: string;
+  parentId?: string | null;
+  /** How many ACTIVE grades sit under this row. Computed by the API so no
+   *  screen has to count them itself — and so "is this orderable" is one
+   *  field rather than a derivation each caller gets to re-invent. */
+  childCount?: number;
+  /** Does an ORDER carrying this product have to pass stage 6? Not "can the
+   *  lab test it" — see the field's note on the model. */
+  orderRequiresLabTest: boolean;
   isActive: boolean;
+}
+
+/**
+ * Can this row go on an order line, carry a spec sheet, or be sampled?
+ *
+ * Only a leaf. "طحين" names a category, not something the warehouse can fill
+ * — you order Super. "نخالة" has nothing under it, so it is both the type and
+ * the thing itself.
+ *
+ * `childCount` comes from the API; an undefined value means the caller is
+ * holding a row from somewhere that does not compute it, and the permissive
+ * answer is the safe one there — a product that cannot be selected anywhere
+ * is a worse failure than one offered a level too high.
+ */
+export const isOrderableProduct = (p: ILabProduct): boolean => !p.childCount;
+
+/**
+ * Group a flat catalogue into `[type, grades[]]` pairs, ready to render as a
+ * grouped picker.
+ *
+ * Lives here, beside the type, because four screens need the identical
+ * grouping (the order dialog, the sample form, the specs screen, the lab step
+ * dialog) and four hand-rolled copies of it would be four chances to disagree
+ * about where a type with no grades belongs.
+ *
+ * A type with no grades appears as a group of one holding itself — the order
+ * dialog then shows "نخالة" under the heading "نخالة", which reads as what it
+ * is rather than as a missing level. Orphans (a grade whose type was
+ * archived) are kept, under their own name, rather than silently dropped.
+ */
+export function groupProductsByType(
+  products: ILabProduct[]
+): { type: ILabProduct; grades: ILabProduct[] }[] {
+  const byId = new Map(products.map((p) => [p._id, p]));
+  const types = products.filter((p) => !p.parentId);
+  const groups = new Map<string, { type: ILabProduct; grades: ILabProduct[] }>(
+    types.map((t) => [t._id, { type: t, grades: [] }])
+  );
+
+  for (const p of products) {
+    if (!p.parentId) {
+      // A type with no grades is its own single option.
+      if (!p.childCount) groups.get(p._id)!.grades.push(p);
+      continue;
+    }
+    const group = groups.get(p.parentId);
+    if (group) group.grades.push(p);
+    else groups.set(p._id, { type: byId.get(p.parentId) ?? p, grades: [p] });
+  }
+
+  return Array.from(groups.values()).filter((g) => g.grades.length > 0);
+}
+
+/**
+ * The catalogue as grouped picker options — every screen that asks a person to
+ * choose a product uses this one.
+ *
+ * Only leaves are offered, each under its type's heading, because "طحين" is a
+ * category and not something anyone can order, sample or hold a spec sheet
+ * for. Six screens were each building this list their own way; six
+ * derivations is six chances for one of them to go on offering a category
+ * after this rule changes again.
+ *
+ * Returns the structural shape `Combobox` wants rather than importing its
+ * type — this file is the domain vocabulary and must not depend on a widget.
+ */
+export function productPickerOptions(
+  products: ILabProduct[],
+  lang: "en" | "ar"
+): { value: string; label: string; group: string }[] {
+  const name = (p: ILabProduct) => (lang === "ar" && p.nameAr) || p.name;
+  return groupProductsByType(products).flatMap(({ type, grades }) =>
+    grades.filter(isOrderableProduct).map((g) => ({
+      value: g._id,
+      label: name(g),
+      group: name(type),
+    }))
+  );
 }
 
 export interface ILabParameterThreshold {
@@ -209,6 +347,7 @@ export interface ILabCustomer {
   code?: string;
   phone?: string;
   contactName?: string;
+  salesRepName?: string;
   address?: string;
   notes?: string;
   isActive: boolean;

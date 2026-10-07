@@ -5,7 +5,7 @@ import { formatDateTime, formatDuration } from "@/lib/utils";
 import { useNow } from "@/lib/useNow";
 import { QcStatusBadge } from "@/components/ui/qc-status-badge";
 import { SALES_STAGES, type StageDef } from "@/lib/salesWorkflow";
-import { ROLE_LABELS, type UserRole } from "@/types";
+import { ROLE_LABELS, VARIANCE_TOLERANCE_PCT, type UserRole } from "@/types";
 import type { OrderRow } from "@/components/orders/cells";
 
 type Step = OrderRow["steps"][number];
@@ -39,6 +39,23 @@ export function ApprovalTimeline({ order }: { order: OrderRow }) {
 
   const stepOf = (key: string) => order.steps.find((s) => s.stageKey === key);
 
+  /**
+   * `skipped` carries two different meanings, and the ladder is where they
+   * must not be confused:
+   *
+   *   not applicable — the stage was never part of THIS order's route. An
+   *                    order of bran or wheat has no lab stage at all, written
+   *                    off at creation.
+   *   not reached    — the order died upstream, so this stage's turn never
+   *                    came. `rejectOrder` marks every pending step skipped.
+   *
+   * "لم يتم الوصول إليها" on a stage nobody was ever going to ask for reads as
+   * an unfinished job. Keyed on `labRequired` rather than on the order's
+   * status, so a REJECTED untested order still names stage 6 correctly.
+   */
+  const notApplicable = (stage: StageDef) =>
+    stage.kind === "data_entry" && order.labRequired === false;
+
   const stateOf = (i: number): NodeState => {
     const steps = byIndex.get(i)!.map((s) => stepOf(s.key));
     if (steps.some((s) => s?.status === "rejected")) return "rejected";
@@ -60,6 +77,7 @@ export function ApprovalTimeline({ order }: { order: OrderRow }) {
           state={stateOf(i)}
           order={order}
           stepOf={stepOf}
+          notApplicable={notApplicable}
           lang={lang}
           t={t}
           now={now}
@@ -82,13 +100,14 @@ const NODE_ICON: Record<NodeState, typeof Check> = {
 };
 
 function TimelineNode({
-  index, stages, state, order, stepOf, lang, t, now,
+  index, stages, state, order, stepOf, notApplicable, lang, t, now,
 }: {
   index: number;
   stages: StageDef[];
   state: NodeState;
   order: OrderRow;
   stepOf: (key: string) => Step | undefined;
+  notApplicable: (stage: StageDef) => boolean;
   lang: "en" | "ar";
   t: (en: string, ar: string) => string;
   now: number | null;
@@ -127,6 +146,13 @@ function TimelineNode({
             <bdi>{signed}/2</bdi> {t("signatures", "توقيع")}
           </span>
         )}
+        {/* Says WHY the stage is grey, which "Not reached" below cannot: this
+            one was never on the order's route. */}
+        {stages.every(notApplicable) && (
+          <span className="text-xs px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">
+            {t("Not applicable", "لا تنطبق")}
+          </span>
+        )}
         {state === "current" && (
           <span className="text-xs px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700">
             {t("Here now", "هنا الآن")}
@@ -144,6 +170,7 @@ function TimelineNode({
             key={stage.key}
             stage={stage}
             step={stepOf(stage.key)}
+            notApplicable={notApplicable(stage)}
             indented={dual}
             lang={lang}
             t={t}
@@ -181,9 +208,9 @@ function TimelineNode({
 
 /** One signature: who, when, standing in for whom, and what they wrote. */
 function SignatureLine({
-  stage, step, indented, lang, t,
+  stage, step, notApplicable, indented, lang, t,
 }: {
-  stage: StageDef; step?: Step; indented: boolean;
+  stage: StageDef; step?: Step; notApplicable: boolean; indented: boolean;
   lang: "en" | "ar"; t: (en: string, ar: string) => string;
 }) {
   const roleLabel = ROLE_LABELS[stage.role as UserRole]?.[lang] ?? stage.role;
@@ -219,7 +246,16 @@ function SignatureLine({
       );
     }
     if (step?.status === "skipped") {
-      return <span className="text-slate-400">{t("Not reached", "لم يتم الوصول إليها")}</span>;
+      return notApplicable ? (
+        <span className="text-slate-400">
+          {t(
+            "No lab test applies to this order's products",
+            "أصناف هذه الطلبية لا تخضع للفحص المخبري"
+          )}
+        </span>
+      ) : (
+        <span className="text-slate-400">{t("Not reached", "لم يتم الوصول إليها")}</span>
+      );
     }
     if (step?.status === "rejected") {
       return <span className="text-red-600">{t("Rejected here", "رُفضت هنا")}</span>;
@@ -246,23 +282,86 @@ function SignatureLine({
   );
 }
 
-/** Ordered vs actual — the number the weighbridge exists to produce. */
+/**
+ * Everything the weighbridge recorded, under the stage that recorded it.
+ *
+ * These were three separate cards further down the page — the load, the reason
+ * for the difference, and the operator's note — which meant the answer to
+ * "what happened at the weighbridge?" was assembled by scrolling past the
+ * chain and reading three boxes that did not say they belonged together. Two
+ * of them were already duplicated inside this node.
+ *
+ * The order here is the order the questions get asked in: what left, on what,
+ * weighing what, and why it differs.
+ */
 function WeighSummary({ order, t }: { order: OrderRow; t: (en: string, ar: string) => string }) {
   const pct = order.variancePct ?? 0;
-  // Half a percent is the mill's own tolerance; past it, somebody should look.
-  const tone = Math.abs(pct) <= 0.5 ? "text-slate-600" : "text-amber-700 font-medium";
+  // The mill's own tolerance; past it, somebody should look — and past it the
+  // weighbridge was required to say why, which is what prints below.
+  const tone = Math.abs(pct) <= VARIANCE_TOLERANCE_PCT ? "text-slate-600" : "text-amber-700 font-medium";
+
+  const tons = (kg?: number | null) =>
+    kg == null ? null : `${(kg / 1000).toFixed(3)} ${t("t", "طن")}`;
+
+  /**
+   * Label ABOVE value, not beside it. The old cards used a label/value row
+   * with the two pushed to opposite edges, so across two columns no two
+   * values lined up and the block read as scattered text rather than a table
+   * of facts.
+   */
+  const facts: { label: string; value: string | null }[] = [
+    { label: t("Destination", "الوجهة"), value: order.weighDestination || null },
+    { label: t("Vehicle number", "رقم السيارة"), value: order.weighVehicleNo || null },
+    { label: t("Carrier", "الناقل"), value: order.weighCarrier || null },
+    { label: t("Driver", "السائق"), value: order.weighDriver || null },
+    { label: t("Gross", "الكلي"), value: tons(order.grossWeightKg) },
+    { label: t("Tare", "الفارغ"), value: tons(order.tareWeightKg) },
+  ].filter((f) => f.value);
+
   return (
-    <div className="mt-1.5 text-sm flex items-center gap-2 flex-wrap">
-      <span className="text-slate-500">{t("Ordered", "المطلوب")}</span>
-      <bdi className="tabular-nums text-slate-700">{(order.totalWeightKg / 1000).toFixed(3)} {t("t", "طن")}</bdi>
-      <span className="text-slate-300">→</span>
-      <span className="text-slate-500">{t("Actual", "الفعلي")}</span>
-      <bdi className="tabular-nums font-medium text-slate-900">
-        {((order.actualNetWeightKg ?? 0) / 1000).toFixed(3)} {t("t", "طن")}
-      </bdi>
-      <bdi className={`tabular-nums ${tone}`}>
-        ({pct > 0 ? "+" : ""}{pct}%)
-      </bdi>
+    <div className="mt-1.5 space-y-2">
+      <div className="text-sm flex items-center gap-2 flex-wrap">
+        <span className="text-slate-500">{t("Ordered", "المطلوب")}</span>
+        <bdi className="tabular-nums text-slate-700">{(order.totalWeightKg / 1000).toFixed(3)} {t("t", "طن")}</bdi>
+        <span className="text-slate-300">→</span>
+        <span className="text-slate-500">{t("Actual", "الفعلي")}</span>
+        <bdi className="tabular-nums font-medium text-slate-900">
+          {((order.actualNetWeightKg ?? 0) / 1000).toFixed(3)} {t("t", "طن")}
+        </bdi>
+        <bdi className={`tabular-nums ${tone}`}>
+          ({pct > 0 ? "+" : ""}{pct}%)
+        </bdi>
+      </div>
+
+      {/* Nothing to show on an order weighed before the load was captured —
+          an empty bordered box would be worse than no box.
+
+          Two columns, so the pairs fall where they belong: destination with
+          vehicle, carrier with driver, and gross with tare on one line — the
+          two figures a reader subtracts. Three columns split the driver away
+          from the carrier and set gross beside a name. */}
+      {facts.length > 0 && (
+        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2.5">
+          {facts.map((f) => (
+            <div key={f.label} className="min-w-0">
+              <dt className="text-xs text-slate-400">{f.label}</dt>
+              <dd className="text-sm text-slate-700 truncate" title={f.value!}>
+                <bdi className={f.label === t("Gross", "الكلي") || f.label === t("Tare", "الفارغ") ? "tabular-nums" : ""}>
+                  {f.value}
+                </bdi>
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+      {/* The justification belongs next to the number it justifies. */}
+      {order.varianceReason && (
+        <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 break-words whitespace-pre-wrap">
+          <span className="font-medium">{t("Reason for the difference", "أسباب فرق الوزن")}:</span>{" "}
+          {order.varianceReason}
+        </p>
+      )}
     </div>
   );
 }

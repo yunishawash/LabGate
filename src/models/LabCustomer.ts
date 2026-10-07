@@ -28,6 +28,9 @@ export interface ILabCustomerDoc extends Document {
   code?: string;
   phone?: string;
   contactName?: string;
+  /** The sales rep (المندوب) who handles this customer — printed on every
+   *  order for them. Snapshotted onto each order at creation, like the address. */
+  salesRepName?: string;
   address?: string;
   notes?: string;
   isActive: boolean;
@@ -46,6 +49,7 @@ const LabCustomerSchema = new Schema<ILabCustomerDoc>(
     code:        { type: String, default: "", trim: true },
     phone:       { type: String, default: "" },
     contactName: { type: String, default: "" },
+    salesRepName: { type: String, default: "", trim: true },
     address:     { type: String, default: "" },
     notes:       { type: String, default: "" },
     isActive:    { type: Boolean, default: true },

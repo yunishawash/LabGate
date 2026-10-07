@@ -123,6 +123,7 @@ export async function POST(req: NextRequest) {
       code: str(body.code, 40),
       phone: str(body.phone, 40),
       contactName: str(body.contactName, 120),
+      salesRepName: str(body.salesRepName, 120),
       address: addressCheck.value,
       notes: notesCheck.value,
       isActive: true,

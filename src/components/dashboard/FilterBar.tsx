@@ -5,6 +5,7 @@ import { useLang } from "@/components/layout/AppShell";
 import { Input } from "@/components/ui/input";
 import { Combobox } from "@/components/ui/combobox";
 import { toDateInputValue } from "@/lib/utils";
+import { productPickerOptions } from "@/types";
 import type { ILabCustomer, ILabProduct } from "@/types";
 
 export interface DashboardFilters {
@@ -75,7 +76,7 @@ export function DashboardFilterBar({
         searchPlaceholder={t("Search products…", "ابحث عن صنف…")}
         options={[
           { value: "", label: t("All products", "كل الأصناف") },
-          ...products.map((p) => ({ value: p._id, label: (lang === "ar" && p.nameAr) || p.name })),
+          ...productPickerOptions(products, lang),
         ]}
       />
 

@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongoose";
 import { requireModule } from "@/lib/requireSession";
@@ -9,6 +10,7 @@ import {
 import { liveDelegationRoles } from "@/lib/salesAuth";
 import { resolveSlot, rejectOrder } from "@/lib/salesTransition";
 import SalesOrder from "@/models/SalesOrder";
+import RejectionReason from "@/models/RejectionReason";
 
 export async function POST(
   req: NextRequest,
@@ -25,10 +27,7 @@ export async function POST(
   const body = await readJson(req);
   const reasonCheck = strictStr(body?.reason, 2000, "Reason");
   if (!reasonCheck.ok) return badStrictStr(reasonCheck);
-  const reason = reasonCheck.value;
-  // A rejection without a stated reason is a dead end nobody can learn from —
-  // and it is what the rejection-analysis report reads.
-  if (!reason) return badRequest("A reason is required to reject an order");
+  const freeText = reasonCheck.value;
 
   const actor: Actor = { id: String(userDoc._id), role: userDoc.role };
   const delegated = await liveDelegationRoles(actor.id);
@@ -62,10 +61,61 @@ export async function POST(
     actedForRole = own ? own.role : actor.role;
   }
 
+  /**
+   * The Technical Manager picks from the managed list; everybody else writes
+   * freely. Keyed on `actedForRole`, not on the actor's own role, so the rule
+   * follows the SIGNATURE rather than the person: a deputy or a delegate
+   * rejecting in the Technical Manager's place is held to his vocabulary,
+   * which is the whole point of recording whose authority was used.
+   *
+   * An admin override resolves `actedForRole` to "admin" above and therefore
+   * keeps the free field — an admin act is recorded as its own, not as a
+   * stand-in for the stage it happened to be sitting on. `rejectAsRole` in
+   * `orderPermissions` mirrors this exactly so the dialog agrees.
+   */
+  const mustPickReason = actedForRole === "technical_manager";
+
+  let reasonId: mongoose.Types.ObjectId | null = null;
+  let reasonLabel = "";
+
+  if (body?.reasonId !== undefined && body?.reasonId !== null && body?.reasonId !== "") {
+    const rid = oid(body.reasonId);
+    if (!rid) return badRequest("Invalid reasonId");
+    const picked = (await RejectionReason.findOne({ _id: rid, isActive: true })
+      .select("label labelAr")
+      .lean()) as { label?: string; labelAr?: string } | null;
+    if (!picked) return badRequest("That rejection reason is not in the list");
+    reasonId = rid;
+    // Arabic first: this is read by Arabic-speaking managers on the order
+    // page, the certificate and the report. Denormalized so retiring or
+    // rewording the row cannot rewrite why this order was killed.
+    reasonLabel = picked.labelAr || picked.label || "";
+  } else if (mustPickReason) {
+    return badRequest(
+      "The Technical Manager must choose a rejection reason from the list."
+    );
+  }
+
+  /**
+   * `reason` stays the single human-readable field every existing reader
+   * already prints — the timeline, the notification, the export, the report.
+   * A chosen reason fills it with its label, and a note is appended rather
+   * than replacing it, so nothing downstream has to learn about `reasonId` to
+   * keep working.
+   */
+  const reason = reasonLabel
+    ? freeText ? `${reasonLabel} — ${freeText}` : reasonLabel
+    : freeText;
+
+  // A rejection without a stated reason is a dead end nobody can learn from —
+  // and it is what the rejection-analysis report reads.
+  if (!reason) return badRequest("A reason is required to reject an order");
+
   const result = await rejectOrder(
     id, shaped,
     { _id: userDoc._id, name: userDoc.name, role: userDoc.role },
-    reason, actedForRole
+    reason, actedForRole,
+    { reasonId, reasonLabel }
   );
 
   if ("code" in result) {

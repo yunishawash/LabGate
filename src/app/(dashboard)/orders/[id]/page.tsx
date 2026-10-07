@@ -17,6 +17,7 @@ import { QcStatusBadge } from "@/components/ui/qc-status-badge";
 import { DecisionBadge } from "@/components/ui/decision-badge";
 import { SALES_STAGES } from "@/lib/salesWorkflow";
 import type { OrderRow } from "@/components/orders/cells";
+import type { LinePackaging } from "@/types";
 
 interface OrderDetail extends OrderRow {
   referenceNo?: string;
@@ -27,8 +28,16 @@ interface OrderDetail extends OrderRow {
   createdAt?: string;
   postedAt?: string | null;
   weighNote?: string;
+  varianceReason?: string;
+  weighedByName?: string;
+  weighDestination?: string;
+  weighVehicleNo?: string;
+  weighCarrier?: string;
+  weighDriver?: string;
+  grossWeightKg?: number | null;
+  tareWeightKg?: number | null;
+  labRequired?: boolean;
   customerAddress?: string;
-  salesRepName?: string;
   agentName?: string;
   paymentMethod?: "cash" | "deferred" | "";
   totalBonusBags?: number;
@@ -37,7 +46,11 @@ interface OrderDetail extends OrderRow {
   packing?: { note?: string; byName?: string; at?: string | null };
   lines: {
     productId: string; product: string; productAr?: string;
-    bagWeightKg: number; bagCount: number; lineWeightKg: number; note?: string; bonusBags?: number;
+    /** Absent on every order raised before bulk loading existed — all bagged. */
+    packaging?: LinePackaging;
+    /** Both null on a bulk line: there are no sacks to describe. */
+    bagWeightKg: number | null; bagCount: number | null;
+    lineWeightKg: number; note?: string; bonusBags?: number;
     actualWeightKg?: number | null;
   }[];
   /** Samples attached to this order so far — one entry per sample, however
@@ -206,6 +219,16 @@ export default function OrderDetailPage() {
             <Printer size={15} />
             {t("Print (MS-SC/F7)", "طباعة (MS-SC/F7)")}
           </Button>
+          {order.status === "Posted" && (
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={() => window.open(`/api/orders/${order._id}/weigh-certificate`, "_blank")}
+            >
+              <Printer size={15} />
+              {t("Weighbridge certificate", "شهادة التوزين")}
+            </Button>
+          )}
           {canEdit && (
             <Button variant="outline" className="gap-2" onClick={() => setEditOpen(true)}>
               <Pencil size={15} />
@@ -249,6 +272,15 @@ export default function OrderDetailPage() {
               <p className="text-sm text-slate-600 whitespace-pre-wrap">{order.notes}</p>
             </div>
           )}
+
+          {/* The weighbridge's own facts — the load, the reason for the
+              difference and the operator's note — are NOT cards here. They
+              live together inside the stage-8 node of the approval chain, in
+              `WeighSummary`, under the stage that recorded them. Three loose
+              boxes below the chain made the reader assemble one answer out of
+              three that did not say they belonged together, and two of them
+              already appeared in the chain as well. */}
+
         </div>
 
         <div className="space-y-3">
@@ -261,11 +293,21 @@ export default function OrderDetailPage() {
             {order.deliveryDate && (
               <Row label={t("Delivery", "التسليم")} value={<bdi>{formatDate(order.deliveryDate)}</bdi>} />
             )}
-            <Row label={t("Bags", "الأكياس")} value={<bdi className="tabular-nums">{order.totalBags}</bdi>} />
+            {/* Omitted entirely on an all-bulk order rather than shown as 0 —
+                the tonnage below is that order's whole quantity. */}
+            {order.totalBags > 0 && (
+              <Row label={t("Bags", "الأكياس")} value={<bdi className="tabular-nums">{order.totalBags}</bdi>} />
+            )}
             <Row
               label={t("Ordered", "الكمية")}
               value={<bdi className="tabular-nums">{(order.totalWeightKg / 1000).toFixed(3)} {t("t", "طن")}</bdi>}
             />
+            {order.labRequired === false && (
+              <Row
+                label={t("Lab test", "الفحص المخبري")}
+                value={<span className="text-slate-500">{t("Not applicable", "لا ينطبق")}</span>}
+              />
+            )}
             {order.postedAt && (
               <Row label={t("Posted at", "وقت الترحيل")} value={<bdi>{formatDateTime(order.postedAt)}</bdi>} />
             )}
@@ -285,7 +327,6 @@ export default function OrderDetailPage() {
           orderDate: order.orderDate,
           deliveryDate: order.deliveryDate,
           notes: order.notes,
-          salesRepName: order.salesRepName,
           agentName: order.agentName,
           paymentMethod: order.paymentMethod,
           lines: order.lines,
@@ -394,8 +435,23 @@ function LinesTable({
                   {((lang === "ar" && l.productAr) || l.product) || "—"}
                   {l.note && <span className="block text-xs text-slate-400">{l.note}</span>}
                 </td>
-                <td className="py-2 px-3 text-end tabular-nums text-slate-600 whitespace-nowrap">{l.bagWeightKg} kg</td>
-                <td className="py-2 px-3 text-end tabular-nums text-slate-600">{l.bagCount}</td>
+                {/* A poured load has no sack size and nothing to count, so the
+                    two columns carry the one fact that is true of it instead of
+                    a pair of dashes. */}
+                {l.packaging === "bulk" ? (
+                  <td className="py-2 px-3 text-center whitespace-nowrap" colSpan={2}>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                      {t("Bulk", "صبّ")}
+                    </span>
+                  </td>
+                ) : (
+                  <>
+                    <td className="py-2 px-3 text-end tabular-nums text-slate-600 whitespace-nowrap">
+                      {l.bagWeightKg != null ? `${l.bagWeightKg} kg` : "—"}
+                    </td>
+                    <td className="py-2 px-3 text-end tabular-nums text-slate-600">{l.bagCount ?? "—"}</td>
+                  </>
+                )}
                 <td className="py-2 text-end tabular-nums text-slate-800 whitespace-nowrap">
                   {(l.lineWeightKg / 1000).toFixed(3)} {t("t", "طن")}
                 </td>
@@ -417,7 +473,7 @@ function LinesTable({
                         const wide = Math.abs(diffPct) > 0.5;
                         return (
                           <span className={wide ? "text-amber-700 font-medium" : "text-slate-500"}>
-                            {diffKg > 0 ? "+" : ""}{diffKg.toFixed(0)} kg
+                            {diffKg > 0 ? "+" : ""}{(diffKg / 1000).toFixed(3)} {t("t", "طن")}
                             <span className="text-xs"> ({diffPct > 0 ? "+" : ""}{diffPct}%)</span>
                           </span>
                         );
@@ -474,7 +530,11 @@ function LinesTable({
           <tr className="border-t border-slate-200 font-medium text-slate-900">
             <td className="py-2">{t("Total", "المجموع")}</td>
             <td />
-            <td className="py-2 px-3 text-end tabular-nums">{order.totalBags}</td>
+            {/* Sacks only. On an all-bulk order there are none, and a 0 under a
+                column of "صبّ" cells would be read as a count. */}
+            <td className="py-2 px-3 text-end tabular-nums">
+              {order.totalBags > 0 ? order.totalBags : <span className="text-slate-300">—</span>}
+            </td>
             <td className="py-2 text-end tabular-nums whitespace-nowrap">
               {(order.totalWeightKg / 1000).toFixed(3)} {t("t", "طن")}
             </td>
@@ -502,7 +562,7 @@ function LinesTable({
                     {(totalActualKg / 1000).toFixed(3)} {t("t", "طن")}
                   </td>
                   <td className={`py-2 ps-3 text-end tabular-nums whitespace-nowrap ${wide ? "text-amber-700" : ""}`}>
-                    {totalDiffKg > 0 ? "+" : ""}{totalDiffKg.toFixed(0)} kg
+                    {totalDiffKg > 0 ? "+" : ""}{(totalDiffKg / 1000).toFixed(3)} {t("t", "طن")}
                     <span className="text-xs"> ({totalDiffPct > 0 ? "+" : ""}{totalDiffPct}%)</span>
                   </td>
                 </>

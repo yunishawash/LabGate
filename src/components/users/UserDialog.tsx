@@ -54,14 +54,15 @@ export function UserDialog({
   const valid =
     name.trim() &&
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) &&
-    (editing ? password === "" || password.length >= 6 : password.length >= 6);
+    (editing ? true : password.length >= 6);
 
   const save = async () => {
     if (!valid) return;
     setSaving(true);
     setError("");
     const body: Record<string, unknown> = { name, nameAr, email, role, permissions };
-    if (password) body.password = password;
+    // Never on an edit — the password belongs to `PasswordDialog` alone.
+    if (!editing && password) body.password = password;
 
     try {
       const res = await fetch(editing ? `/api/users/${editing._id}` : "/api/users", {
@@ -112,13 +113,28 @@ export function UserDialog({
             <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} dir="ltr" />
           </div>
 
-          <div className="space-y-1.5">
-            <Label>
-              {editing ? t("New password (leave blank to keep)", "كلمة سر جديدة (اتركها فاضية للإبقاء)") : t("Password", "كلمة السر")}
-              {!editing && " *"}
-            </Label>
-            <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} dir="ltr" autoComplete="new-password" />
-          </div>
+          {/*
+            Only when creating. A password field here on an EDIT was the whole
+            confusion: the key button in the list opened this same dialog, so
+            "reset password" and "edit user" were one form, and a password sat
+            one slip away from a role change. Resetting now has its own dialog
+            (`PasswordDialog`), and this field exists only where there is no
+            account to reset yet.
+          */}
+          {!editing && (
+            <div className="space-y-1.5">
+              <Label htmlFor="user-password">{t("Password", "كلمة السر")} *</Label>
+              <Input
+                id="user-password"
+                type="password" value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                dir="ltr" autoComplete="new-password"
+              />
+              <p className="text-xs text-slate-400">
+                {t("At least 6 characters.", "6 أحرف على الأقل.")}
+              </p>
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label>{t("Role", "الدور")} *</Label>

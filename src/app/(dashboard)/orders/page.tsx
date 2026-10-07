@@ -191,7 +191,13 @@ export default function OrdersPage() {
     {
       key: "totalBags",
       label: t("Bags", "الأكياس"),
-      render: (o) => <bdi className="tabular-nums text-slate-700 whitespace-nowrap">{o.totalBags}</bdi>,
+      // An all-bulk order genuinely has none. A dash says that; a 0 reads as a
+      // bagged order with nothing in it.
+      render: (o) => (
+        <bdi className="tabular-nums text-slate-700 whitespace-nowrap">
+          {o.totalBags > 0 ? o.totalBags : <span className="text-slate-300">—</span>}
+        </bdi>
+      ),
     },
     {
       key: "totalWeightKg",

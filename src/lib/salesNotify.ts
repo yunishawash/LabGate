@@ -15,6 +15,9 @@ interface OrderLite {
   customerAr?: string;
   createdById?: unknown;
   totalWeightKg?: number;
+  /** False on an order with no lab-tested product. Absent on every order
+   *  raised before the field existed, all of them flour. */
+  labRequired?: boolean;
 }
 
 type Recipient = { id: string; reason: "primary" | "deputy" | "delegate" };
@@ -133,12 +136,22 @@ export async function notifyStageEntered(
       const onBehalf = r.reason === "primary" ? "" : ` (${roleLabel(stage.role, "en")})`;
       const onBehalfAr = r.reason === "primary" ? "" : ` (${roleLabel(stage.role, "ar")})`;
 
+      /**
+       * Stage 7 is named "Lab results sign-off", which is the truth for flour
+       * and a puzzle for anything else: an order of bran reaches it with no
+       * results at all, and a notification promising results the General
+       * Manager then cannot find reads as a system that lost them.
+       */
+      const noLab = stage.kind === "approval" && stage.index === 7 && order.labRequired === false;
+      const suffix = noLab ? " — no lab test applies" : "";
+      const suffixAr = noLab ? " — لا يخضع للفحص المخبري" : "";
+
       await deliver(r.id, {
         type: "order_pending",
         title: `Waiting for your approval${onBehalf}`,
         titleAr: `في انتظار اعتمادك${onBehalfAr}`,
-        message: `${order.orderNumber} · ${order.customer ?? ""} — ${stage.en}`,
-        messageAr: `${order.orderNumber} · ${order.customerAr || order.customer || ""} — ${stage.ar}`,
+        message: `${order.orderNumber} · ${order.customer ?? ""} — ${stage.en}${suffix}`,
+        messageAr: `${order.orderNumber} · ${order.customerAr || order.customer || ""} — ${stage.ar}${suffixAr}`,
         salesOrderId: order._id,
       });
     }

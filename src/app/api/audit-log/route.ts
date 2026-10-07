@@ -4,7 +4,7 @@ import { requireRole } from "@/lib/requireSession";
 import { containsRegex, dateRange, oneOf, paging } from "@/lib/apiHelpers";
 import AuditLog from "@/models/AuditLog";
 
-const ENTITY_TYPES = ["sales_order", "delegation", "user", "lab_sample"] as const;
+const ENTITY_TYPES = ["sales_order", "delegation", "user", "lab_sample", "rejection_reason"] as const;
 
 /**
  * The audit trail — admin and the General Manager.

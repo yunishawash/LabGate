@@ -5,6 +5,7 @@ import {
   badRequest, badStrictStr, containsRegex, dateRange, oid, paging, readJson, str, strictStr, oneOf,
 } from "@/lib/apiHelpers";
 import { createSalesOrder } from "@/lib/salesOrder";
+import { buildOrderLines } from "@/lib/salesOrderLines";
 import { writeAudit } from "@/lib/audit";
 import { notifyStageEntered } from "@/lib/salesNotify";
 import {
@@ -14,11 +15,9 @@ import {
 import { liveDelegationRoles, orderPermissions, stagesOwnedBy } from "@/lib/salesAuth";
 import SalesOrder from "@/models/SalesOrder";
 import LabCustomer from "@/models/LabCustomer";
-import LabProduct from "@/models/LabProduct";
 import User from "@/models/User";
 import { notAbsentFilter } from "@/lib/requireSession";
 import { SALES_STAGES } from "@/lib/salesWorkflow";
-import { BAG_WEIGHTS } from "@/types";
 
 const ORDER_STATUSES = ["Pending", "Posted", "Rejected"] as const;
 
@@ -190,8 +189,8 @@ export async function POST(req: NextRequest) {
   if (!customerId) return badRequest("A valid customerId is required");
 
   const customer = (await LabCustomer.findOne({ _id: customerId, isActive: true })
-    .select("name nameAr address")
-    .lean()) as { name?: string; nameAr?: string; address?: string } | null;
+    .select("name nameAr address salesRepName")
+    .lean()) as { name?: string; nameAr?: string; address?: string; salesRepName?: string } | null;
   if (!customer) return badRequest("Unknown customer");
 
   const orderDate = new Date(str(body.orderDate, 40));
@@ -213,74 +212,14 @@ export async function POST(req: NextRequest) {
   // already-approved paper trail.
   const addressCheck = strictStr(body.customerAddress || customer.address || "", 500, "Customer address");
   if (!addressCheck.ok) return badStrictStr(addressCheck);
-  const salesRepCheck = strictStr(body.salesRepName, 120, "Sales rep name");
-  if (!salesRepCheck.ok) return badStrictStr(salesRepCheck);
   const agentCheck = strictStr(body.agentName, 120, "Agent name");
   if (!agentCheck.ok) return badStrictStr(agentCheck);
   const paymentMethod: "cash" | "deferred" | "" =
     body.paymentMethod === "cash" || body.paymentMethod === "deferred" ? body.paymentMethod : "";
 
-  const rawLines = Array.isArray(body.lines) ? body.lines : [];
-  if (!rawLines.length) return badRequest("An order needs at least one line");
-  if (rawLines.length > 50) return badRequest("An order cannot have more than 50 lines");
-
-  const lines: Record<string, unknown>[] = [];
-  let totalBags = 0;
-  let totalWeightKg = 0;
-  let totalBonusBags = 0;
-  let totalBonusWeightKg = 0;
-
-  for (const raw of rawLines) {
-    const row = raw as { productId?: unknown; bagWeightKg?: unknown; bagCount?: unknown; note?: unknown; bonusBags?: unknown };
-
-    const productId = oid(row.productId);
-    if (!productId) return badRequest("Every line needs a valid productId");
-
-    const bagWeightKg = Number(row.bagWeightKg);
-    if (!(BAG_WEIGHTS as readonly number[]).includes(bagWeightKg)) {
-      return badRequest(`Bag weight must be one of ${BAG_WEIGHTS.join(", ")} kg`);
-    }
-
-    const bagCount = Number(row.bagCount);
-    if (!Number.isInteger(bagCount) || bagCount < 1) {
-      return badRequest("Every line needs a whole bag count of at least 1");
-    }
-
-    const noteCheck = strictStr(row.note, 500, "Line note");
-    if (!noteCheck.ok) return badStrictStr(noteCheck);
-
-    const product = (await LabProduct.findOne({ _id: productId, isActive: true })
-      .select("name nameAr")
-      .lean()) as { name?: string; nameAr?: string } | null;
-    if (!product) return badRequest("Unknown product on one of the lines");
-
-    // Computed here, never taken from the client — the same rule the lab
-    // applies to a scored result.
-    const lineWeightKg = bagWeightKg * bagCount;
-    totalBags += bagCount;
-    totalWeightKg += lineWeightKg;
-
-    // A sales concession, tracked separately (SPEC decision): folding it into
-    // totalBags/totalWeightKg would silently rewrite the variance/report math
-    // those fields already feed.
-    const bonusBags = Number(row.bonusBags) || 0;
-    if (!Number.isInteger(bonusBags) || bonusBags < 0) {
-      return badRequest("Bonus bags must be a whole number of 0 or more");
-    }
-    totalBonusBags += bonusBags;
-    totalBonusWeightKg += bonusBags * bagWeightKg;
-
-    lines.push({
-      productId,
-      product: product.name || "",
-      productAr: product.nameAr || "",
-      bagWeightKg,
-      bagCount,
-      lineWeightKg,
-      note: noteCheck.value,
-      bonusBags,
-    });
-  }
+  const built = await buildOrderLines(body.lines);
+  if (!built.ok) return built.error;
+  const { lines, totalBags, totalWeightKg, totalBonusBags, totalBonusWeightKg, labRequired } = built.value;
 
   const order = await createSalesOrder(
     {
@@ -292,10 +231,13 @@ export async function POST(req: NextRequest) {
       deliveryDate,
       notes: notesCheck.value,
       customerAddress: addressCheck.value,
-      salesRepName: salesRepCheck.value,
+      // Always the customer's own rep — a rep is a property of the customer, not
+      // something chosen per order.
+      salesRepName: customer.salesRepName || "",
       agentName: agentCheck.value,
       paymentMethod,
       lines,
+      labRequired,
       totalBags,
       totalWeightKg,
       totalBonusBags,
@@ -321,7 +263,9 @@ export async function POST(req: NextRequest) {
     newValue: 2,
     performedBy: userDoc._id,
     performedByName: userDoc.name,
-    notes: `${totalBags} bags · ${(totalWeightKg / 1000).toFixed(3)} t · ${lines.length} line(s)`,
+    notes:
+      `${totalBags} bags · ${(totalWeightKg / 1000).toFixed(3)} t · ${lines.length} line(s)` +
+      (labRequired ? "" : " · لا يخضع للفحص المخبري (تم تخطّي المرحلة ٦)"),
   });
 
   notifyStageEntered(

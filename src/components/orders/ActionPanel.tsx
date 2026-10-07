@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { SALES_STAGES } from "@/lib/salesWorkflow";
-import { ROLE_LABELS, type UserRole } from "@/types";
+import { ROLE_LABELS, type LinePackaging, type UserRole } from "@/types";
 import type { OrderRow } from "@/components/orders/cells";
 import { RejectDialog } from "@/components/orders/RejectDialog";
 import { WeighDialog } from "@/components/orders/WeighDialog";
@@ -16,6 +16,9 @@ import { LabStepDialog } from "@/components/orders/LabStepDialog";
 type Perms = NonNullable<OrderRow["permissions"]> & {
   canApprove?: boolean; canReject?: boolean; canEnterLab?: boolean;
   canWeigh?: boolean; canEdit?: boolean; actableStageKeys?: string[];
+  /** Whose authority a rejection by this actor would be recorded under —
+   *  decides whether the managed reason list applies. Server-computed. */
+  rejectAsRole?: string;
 };
 
 /**
@@ -29,7 +32,11 @@ export function ActionPanel({
   order: OrderRow & {
     customerId?: string;
     collections?: { note?: string };
-    lines: { productId: string; product?: string; productAr?: string; bagWeightKg?: number; bagCount?: number; lineWeightKg: number }[];
+    lines: {
+      productId: string; product?: string; productAr?: string;
+      packaging?: LinePackaging;
+      bagWeightKg?: number | null; bagCount?: number | null; lineWeightKg: number;
+    }[];
     labSamples?: { productId: string }[];
   };
   onDone: () => void;
@@ -252,6 +259,7 @@ export function ActionPanel({
         open={rejectOpen}
         orderId={order._id}
         orderNumber={order.orderNumber}
+        rejectAsRole={p.rejectAsRole}
         onClose={() => setRejectOpen(false)}
         onDone={onDone}
       />

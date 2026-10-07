@@ -19,7 +19,14 @@ import LabParameterThreshold from "../models/LabParameterThreshold";
 // hardcoded its connection string, which on a new server silently seeds the
 // wrong database (SPEC §5).
 
-// ── 8 flour grades ───────────────────────────────────────────────────────────
+// ── The flour TYPE, and its 8 grades ─────────────────────────────────────────
+// The catalogue is two levels: a product type (نوع منتج) with grades (أصناف)
+// under it. Every product below is a grade OF flour — they were a flat list
+// for as long as flour was the only thing the mill tracked, which stopped
+// being true when bran, germ, semolina and wheat arrived as types of their
+// own. See models/LabProduct for why both levels share one collection.
+const FLOUR_TYPE = { name: "Flour", nameAr: "طحين" };
+
 // The grade names are what the plant actually calls them. Numeric codes have no
 // translation; the rest are Arabic brand names that the CMMS only ever stored
 // transliterated.
@@ -119,14 +126,29 @@ async function main() {
   await ensurePrimary(mongoose);
   console.log("Connected. Seeding Lab / Quality catalog...\n");
 
-  // ── Products ────────────────────────────────────────────────────────────
+  // ── The flour type ──────────────────────────────────────────────────────
+  const flourType = await LabProduct.findOneAndUpdate(
+    { name: FLOUR_TYPE.name },
+    {
+      $setOnInsert: { name: FLOUR_TYPE.name, parentId: null, orderRequiresLabTest: true, isActive: true },
+      $set: { nameAr: FLOUR_TYPE.nameAr },
+    },
+    { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
+  );
+  const flourTypeId = flourType._id as mongoose.Types.ObjectId;
+  console.log(`Product type: ${FLOUR_TYPE.name} (${FLOUR_TYPE.nameAr})`);
+
+  // ── Grades ──────────────────────────────────────────────────────────────
   let productsCreated = 0;
   const productIdByName = new Map<string, mongoose.Types.ObjectId>();
   for (const p of PRODUCTS) {
     const res = await LabProduct.findOneAndUpdate(
       { name: p.name },
       {
-        $setOnInsert: { name: p.name, isActive: true },
+        // `parentId` is $setOnInsert like everything else that is a decision
+        // rather than a translation: a grade somebody has since moved under a
+        // different type must survive a re-run of the seed.
+        $setOnInsert: { name: p.name, parentId: flourTypeId, orderRequiresLabTest: true, isActive: true },
         // Like the parameters: the Arabic label is a translation, so it syncs on
         // every run rather than only on insert.
         $set: { nameAr: p.nameAr },
@@ -136,9 +158,26 @@ async function main() {
     productIdByName.set(p.name, res._id as mongoose.Types.ObjectId);
     productsCreated++;
   }
-  console.log(`Products: ${productsCreated} upserted (${PRODUCTS.map((p) => p.name).join(", ")})`);
+  console.log(`Grades: ${productsCreated} upserted (${PRODUCTS.map((p) => p.name).join(", ")})`);
 
   // ── Parameters ──────────────────────────────────────────────────────────
+  /**
+   * Every parameter in this file is a FLOUR test, so each one is scoped to the
+   * eight grades above rather than left unscoped.
+   *
+   * An empty `productIds` means "every product", which was the only sensible
+   * default while flour was all the lab had. It is now wrong: wheat is in the
+   * catalog, and an unscoped "Falling Number" would appear on its spec sheet
+   * and its entry form. Scoping here means a database built from
+   * `npm run seed:lab` alone is already correct, without waiting for
+   * `npm run migrate:product-catalog` to come along and fix it.
+   *
+   * Scoped to the TYPE, not to the eight grades. The spec resolver matches a
+   * test scoped to a grade's parent, so one id says what eight would — and
+   * keeps saying it for the ninth grade, the day somebody adds one.
+   */
+  const flourProductIds = [flourTypeId];
+
   let parametersCreated = 0;
   const parameterIdByName = new Map<string, mongoose.Types.ObjectId>();
   for (const p of PARAMETERS) {
@@ -150,6 +189,9 @@ async function main() {
         $setOnInsert: {
           name: p.name, unit: p.unit, operator: p.operator,
           defaultMin: p.defaultMin, defaultMax: p.defaultMax, defaultTarget: p.defaultTarget,
+          // $setOnInsert like the limits: a re-run must not undo a scope QA has
+          // since widened or narrowed from the Products & Specs screen.
+          productIds: flourProductIds,
           order: p.order, isActive: true,
         },
         // The Arabic label is a translation, not a tuned value — it should

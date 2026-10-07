@@ -24,7 +24,28 @@ export interface OrderRow {
   actualNetWeightKg?: number | null;
   varianceKg?: number | null;
   variancePct?: number | null;
-  rejection?: { reason?: string; byName?: string; stageIndex?: number | null };
+  /** Why the scale disagreed with the order. Set only past the tolerance. */
+  varianceReason?: string;
+  weighNote?: string;
+  /** The load, as the weighbridge recorded it. All rendered inside the
+   *  stage-8 node of the approval chain — see `WeighSummary`. */
+  weighDestination?: string;
+  weighVehicleNo?: string;
+  weighCarrier?: string;
+  weighDriver?: string;
+  grossWeightKg?: number | null;
+  tareWeightKg?: number | null;
+  /**
+   * Does this order pass stage 6? Absent on every order raised before the
+   * field existed, all of which are flour — so a missing value reads as true,
+   * never as "skipped".
+   */
+  labRequired?: boolean;
+  rejection?: {
+    reason?: string; byName?: string; stageIndex?: number | null;
+    /** Set when the reason came from the admin-managed list. */
+    reasonLabel?: string;
+  };
   steps: {
     stageKey: string; stageIndex: number; role: string; kind: string; status: string;
     actedByName?: string; actedAt?: string | null; actedAs?: string; actedForRole?: string;

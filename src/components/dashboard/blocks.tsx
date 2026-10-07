@@ -340,7 +340,7 @@ export function WaitingOnMe({
           {t("Nothing is waiting on you.", "لا يوجد شيء في انتظارك.")}{" "}
           {inChain > 0
             ? t(`${inChain} order(s) are moving through the chain.`, `هناك ${inChain} طلبية تسير في السلسلة.`)
-            : t("The chain is empty.", "السلسلة فاضية.")}
+            : t("The chain is empty.", "السلسلة فارغة.")}
         </Empty>
       )}
     </Card>
@@ -622,7 +622,9 @@ export function ReadyToWeigh({
                 {tons(o.totalWeightKg, t)}
               </bdi>
               <bdi className="text-xs text-slate-400 tabular-nums whitespace-nowrap hidden sm:block">
-                {o.totalBags} {t("bags", "كيس")}
+                {/* Bulk loads have no sacks — the tonnage beside this is their
+                    whole quantity, so "0 كيس" would be noise. */}
+                {o.totalBags ? `${o.totalBags} ${t("bags", "كيس")}` : t("bulk", "صبّ")}
               </bdi>
             </li>
           ))}

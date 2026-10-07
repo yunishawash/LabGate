@@ -1532,6 +1532,220 @@ parallel; 8–10 depend only on 5.
 9. **`LabSample.finalDecision` vs stage 7.** Two overlapping sign-offs on the same
    data. Stage 7 signs off on the **order**; `finalDecision` signs off on the
    **sample**. Keep them separate.
+10. **`labRequired` is frozen at creation, never re-derived** (§14.1 below).
+   Re-deriving it from the products on read would let a product-catalog edit
+   change the route of an order already past the lab — and `currentStageIndex`
+   is monotonic, so there is no way back.
+11. **`skipped` means two different things.** A stage written off the order's
+   route at creation, and a stage the order never reached because it was
+   rejected upstream. `stageSkipped()` cannot tell them apart and must only be
+   asked about a **live** order; every screen that renders the difference keys
+   on `labRequired`, not on the step status alone.
+
+---
+
+### 14.1 The five changes of 2026-10-06
+
+Client requests, and how each is modelled.
+
+**0 · The catalogue has two levels.**
+It did not, and that was a modelling error worth naming: the eight entries that
+existed (WFP, 302, Super…) are **grades of flour**, and bran, germ, semolina and
+wheat are **product types**. Putting them in one flat list set a category beside
+a grade of a category as though they were the same kind of thing.
+
+`LabProduct.parentId` makes it a shallow tree — `null` for a type (نوع منتج),
+set for a grade (صنف) of it. One collection, not two, because نخالة is *both*:
+the type AND the row an order line points at. Separate collections would force a
+fake grade "نخالة" under a type "نخالة" just to give the line a target, and
+would turn one foreign key into two everywhere an order line, a sample and a
+threshold refer to a product.
+
+**What is orderable is a leaf** — a row with no active grades under it. طحين is
+not (you order Super); نخالة is. `isOrderableProduct` and `productPickerOptions`
+in `src/types` are the single derivation of that, used by all six pickers;
+`buildOrderLines` refuses a type on a line regardless.
+
+One level only. A grade may not have grades, which the POST route enforces by
+refusing a parent that itself has a parent.
+
+**1 · Non-flour products take no lab test.**
+`LabProduct.orderRequiresLabTest` (default **true** — a product added without
+thought waits for a test it may not need, which is a visible delay, rather than
+skipping one it did, which is a shipped defect). Bran, germ, semolina and wheat
+are created `false` by `npm run migrate:product-catalog`.
+
+The decision belongs to the **type**: "flour is tested, bran is not" is not a
+sentence about Super. Grades hold a denormalized copy so `buildOrderLines`
+answers with the one query it already makes per line instead of climbing the
+tree, and the type's own update cascades into them. Setting it on a grade is a
+400 — a grade disagreeing with its type would split one product's orders across
+two routes with nothing on screen explaining why.
+
+The flag names the **order chain**, not the laboratory: wheat is sampled and
+scored routinely as incoming-grain QC through the ordinary lab screens, and only
+a wheat *order* carries no lab gate. The two questions are genuinely separate,
+which is why the field is not called `requiresLabTest`.
+
+Mechanism: `buildInitialSteps` writes stage 6 as `skipped` **at creation**, and
+`claimAndAdvance` advances by `nextLiveStageIndex` rather than `nextStageIndex`,
+so the Technical Manager's approval at 5 lands the order on 7. Deciding the
+route at creation rather than jumping over the stage at run time is what keeps
+every reader — the ladder, "waiting on me", the aging report, the technician's
+queue — from believing the lab owes a result nobody will ask for.
+
+**Stage 7 stays live.** The client's decision: the General Manager's signature
+is the last human gate before the weighbridge whether or not there were results
+to read. The sign-off queue and the stage-7 notification both say so explicitly
+rather than leaving an untested order looking like one whose results went
+missing.
+
+**An order may not mix tested and untested products.** Enforced in
+`buildOrderLines`. Accommodating a mix would cost more than it looks: stage 6's
+coverage check would have to distinguish products that owe a sample from those
+that do not, `labRequired` would stop being one fact about the order, and the
+General Manager at stage 7 would be signing off a page covering half the load.
+A mixed truck becomes two orders, which is a keystroke.
+
+**2 · Wheat tests.**
+`LabParameter.productIds` scopes a test to the products it applies to. **Empty
+means every product** — the permissive default the flat catalogue had, so no
+pre-existing screen loses a row. The migration therefore scopes the eleven flour
+parameters explicitly; left empty they would read as "applies to wheat too",
+which is the one thing the field exists to prevent.
+
+Scoped to the **type**, not to the eight grades one by one: the specs resolver
+matches a test scoped to a grade's parent, so one id says what eight would —
+and keeps saying it for the ninth grade, the day somebody adds one. Wheat's own
+tests are entered from Lab → Products & Specs → Add parameter, ticking only قمح
+under "Applies to".
+
+**3 · Rejection reasons.**
+`RejectionReason`, administrator-managed at `/settings`. The Technical Manager
+**must** pick one and may add a note; every other role keeps writing freely —
+a finance or management rejection can be about anything, where his are a small
+closed set about the plant's ability to supply.
+
+Keyed on `actedForRole`, so the rule follows the **signature** rather than the
+person: a deputy or delegate acting in his place is held to his vocabulary. An
+admin override resolves to `"admin"` and keeps the free field, because an admin
+act is recorded as its own and not as a stand-in. `permissions.rejectAsRole`
+mirrors the route's own derivation so the dialog cannot disagree with it.
+
+`rejection.reason` remains the single human-readable field every existing reader
+prints; `reasonId`/`reasonLabel` only add the groupable identity behind it. The
+label is denormalized so retiring or rewording a row cannot rewrite why an order
+was already killed, and `DELETE` refuses to empty the list — a configuration
+screen must not be able to disable a stage of the chain.
+
+`settings` is in `RESTRICTED_MODULES` **and** in `UNGRANTABLE_MODULES`: nobody
+can hold the permission, so only the `admin` bypass opens it.
+
+**4 · Justifying a weight difference.**
+`SalesOrder.varianceReason`, required by the server when
+`|variancePct| > VARIANCE_TOLERANCE_PCT` (0.5). Kept apart from `weighNote`: the
+note is whatever the operator wants to record about the load, this is the
+defence of a specific number. Folding them together would mean a report column
+that is sometimes an explanation and sometimes "truck 4 came late".
+
+The field is OFFERED for any difference at all and DEMANDED only past the
+tolerance. Showing it only past ±0.5% meant the operator could not record a
+cause for a small gap even when he knew it — the box did not exist — and the
+report then printed a difference with nothing beside it. Appearing and being
+required are two questions, and one control answering both answered the second
+twice and the first never.
+
+Printed on the weighbridge certificate, on page 1 of the MS-SC/F7 sheet beside
+the "الوزن الفعلي" column it explains, on that form's chain page, and on the
+order detail page; exported as its own column.
+
+### 14.2 The load, and one certificate in two places
+
+**The weighbridge records the load, not just its weight.** Destination,
+vehicle number, carrier and driver (`weighDestination`, `weighVehicleNo`,
+`weighCarrier`, `weighDriver`) and the scale's own two readings
+(`grossWeightKg`, `tareWeightKg`, kilograms, entered in tonnes) are captured at
+stage 8 and all required. They were ruled lines on a printed sheet before, so
+the system held a net weight it could not attribute to a truck.
+
+Gross and tare are kept ALONGSIDE the per-line nets, not instead of them: the
+scale sees one truck, the order needs a figure per product. The two answer the
+same question from different directions, and keeping both is what makes a
+disagreement visible — deriving one from the other would hide it. A gap of 1 kg
+or more is flagged in the dialog and does **not** block posting: the operator is
+at the gate with a driver waiting, and rounding is not a reason to refuse a
+whole load.
+
+**The certificate is a page of the order form, and its own printable.** Both
+render `buildWeighCertificateBody`, so the copy handed to the driver and the
+copy filed with the order cannot drift. Its CSS is namespaced under
+`.weigh-cert` because the order form has its own `table`, `td` and
+`.notes-title` rules — unscoped, the certificate's bare `td, th { }` would
+repaint every table on the form. The page appears only once
+`actualNetWeightKg` is set; before that it would be a sheet of blanks inviting
+somebody to fill it in by hand, which is the practice it replaces.
+
+`esc`, `fmtDate`, `fmtDateTime` and `fontFaces` moved to `src/lib/pdf/shared.ts`
+when this landed. The certificate had imported them from the order form, and
+the order form now carries the certificate — a cycle that happens to work while
+neither module reads the other at load time, and stops working silently the day
+one does.
+
+⚠️ **Mongoose caches the compiled model** (`mongoose.models.SalesOrder || …`).
+A dev server running since before a schema path was added keeps the OLD schema,
+and strict mode drops the unknown path from `$set` **without erroring** — the
+write succeeds and the field is simply absent. Restart the dev server after
+adding a field, and check a round trip in the database rather than trusting a
+200.
+
+⚠️ `VARIANCE_TOLERANCE_PCT` is **not** the variance report's threshold. That one
+lists orders beyond ±1% — a looser net for "worth a look later". This is the
+tighter "explain it now" line, and the two answer different questions.
+
+**5 · Bulk loading (صبّ).**
+`ISalesOrderLine.packaging: "bagged" | "bulk"`. Any product can go out either
+way — bran and wheat usually loose, but a flour line can be too — so it is a
+free choice per line and not a property of the product.
+
+On a bulk line `bagWeightKg` and `bagCount` are **`null`, not `0`**: a zero bag
+count reads as "bagged, none ordered", which is a different and false statement,
+and it would quietly pass every `?? 0` in the reports. `totalBags` counts sacks
+only, and `bonusBags` is always 0 on a bulk line because a bonus is counted in
+sacks.
+
+**Weights are ENTERED in tonnes and STORED in kilograms.** The mill sells and
+talks in tonnes — a bulk load is "thirty tonnes", never "thirty thousand
+kilograms" — so both entry points ask for tonnes: the order's bulk line
+(`weightTons` on the wire) and the weighbridge's per-line net weight. Storage
+stays in kilograms, which the variance maths, the reports, the exports and the
+printed forms all depend on. Each conversion happens once, at the edge, in the
+route: `src/lib/salesOrderLines.ts` for the order and the weigh route for the
+scale. Three decimals of a tonne is one kilogram, so nothing is lost.
+
+⚠️ `bagWeightKg` stays in **kilograms**: it is a sack size, and the mill fills
+50 kg sacks, not 0.05 t ones. It is the one weight in the system a person reads
+in kilograms, on screen and on the printed form alike.
+
+Both routes cap a line at 200 t, which is really a unit check: a real truck is
+~30 t, so the ceiling catches a kilogram figure typed into a tonnes box — the
+one slip the unit change makes possible, and the one `check:order-routes`
+asserts is refused.
+
+Line validation moved to `src/lib/salesOrderLines.ts`, shared by `POST
+/api/orders` and `PUT /api/orders/[id]`. It had been duplicated as two
+near-identical forty-line blocks; three new rules across two routes is six
+places for them to drift, and a drift there means the create path and the edit
+path disagree about what a legal order is.
+
+**Migration.** `npm run migrate:product-catalog` — idempotent. Creates the
+"طحين" type and moves the eight grades under it, creates the four non-flour
+types, scopes the flour parameters to the type (collapsing any earlier
+per-grade scoping), seeds the one rejection reason, and backfills
+`labRequired: true` and `packaging: "bagged"` onto existing orders.
+`npm run seed:lab` produces the same two-level shape on a fresh database, so a
+new install needs no migration to be correct.
+**Verification.** `npm run check:order-routes` walks both routes end to end
+against the real database and cleans up after itself.
 
 ### Open questions for the client — answer before phase 4
 
@@ -1573,6 +1787,25 @@ parallel; 8–10 depend only on 5.
   total; rejection-rate denominators must equal
   `countDocuments({ currentStageIndex: { $gte: i } })`; the Excel row count must
   equal the on-screen `total`.
+- **Report contents** — the technical manager's name and note print on PAGE 1 of
+  the MS-SC/F7 sheet, not only on the chain page behind it. That gap survived
+  because the data was right all along: `technicalManagerStep` was simply never
+  resolved in the template, so page 1 printed a blank dotted line where his
+  signature belongs. Check page 1 specifically, not the PDF as a whole.
+- **Order routes (§14.1)** — `npm run check:order-routes`. Asserts the catalogue
+  is two levels and that a product type is refused on an order line; walks a
+  flour order and a bran order to stage 5, signs it, and asserts the first lands
+  on 6 and the second on 7; checks `nextLiveStageIndex` is forward-only on both;
+  asserts
+  wheat does not inherit flour's tests, that the Technical Manager's rejection
+  resolves to the managed list while the GM's does not, that a bulk line stores
+  `null` bag fields, and that a mixed order is refused. Creates and deletes its
+  own orders.
+  ⚠️ It signs stages through `claimAndAdvance` directly, so it does **not**
+  honour a route's extra preconditions — which is why nothing in it walks
+  *through* stage 6. A test that signed stage 6 blindly would prove only that
+  the helper can, and the first version of this script did exactly that and
+  reported it as a product bug.
 - **Always** — `npx tsc --noEmit` and `npm run build` before calling a phase done.
 
 ---

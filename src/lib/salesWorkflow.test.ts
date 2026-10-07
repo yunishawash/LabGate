@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { Types } from "mongoose";
 import {
   SALES_STAGES, MIN_STAGE_BY_ROLE, stagesAt, nextStageIndex, isTerminal,
-  stageComplete, actableStages, canReject, canCreate, canEdit,
+  stageComplete, stageSkipped, nextLiveStageIndex,
+  actableStages, canReject, canCreate, canEdit,
   authorityFor, visibilityFilter, andFilters, stageByKey,
   type OrderLike, type StepLike, type Actor,
 } from "./salesWorkflow";
@@ -30,6 +31,21 @@ function orderAt(stageIndex: number, over: Partial<OrderLike> = {}): OrderLike {
 }
 
 const actor = (role: string, id = ME): Actor => ({ id, role });
+
+/**
+ * An order with no lab-tested product: stage 6 written off at creation, every
+ * stage before `stageIndex` signed. The shape `buildInitialSteps` produces for
+ * an order of bran, germ, semolina or wheat.
+ */
+function untestedOrderAt(stageIndex: number, over: Partial<OrderLike> = {}): OrderLike {
+  const base = orderAt(stageIndex, over);
+  return {
+    ...base,
+    steps: base.steps.map((s) =>
+      s.kind === "data_entry" ? { ...s, status: "skipped" } : s
+    ),
+  };
+}
 
 describe("the stage table", () => {
   it("declares eight visible stages, one slot each", () => {
@@ -100,6 +116,79 @@ describe("stageComplete", () => {
     o.steps.push({ stageKey: "lab_signoff_tm", stageIndex: 7, role: "technical_manager", kind: "approval", status: "pending" });
     o.steps.find((s) => s.stageKey === "lab_signoff_gm")!.status = "approved";
     expect(stageComplete(o, 7)).toBe(true);
+  });
+});
+
+describe("stageSkipped — a stage written off the route", () => {
+  it("is false on a flour order, whose stage 6 is merely pending", () => {
+    expect(stageSkipped(orderAt(5), 6)).toBe(false);
+  });
+
+  it("is true on an untested order's stage 6", () => {
+    expect(stageSkipped(untestedOrderAt(5), 6)).toBe(true);
+  });
+
+  it("leaves stage 7 live on an untested order — the GM still signs", () => {
+    expect(stageSkipped(untestedOrderAt(5), 7)).toBe(false);
+  });
+
+  it("never reports a signed stage as skipped", () => {
+    const o = untestedOrderAt(7);
+    for (const i of [1, 2, 3, 4, 5]) expect(stageSkipped(o, i)).toBe(false);
+  });
+
+  /**
+   * The trap this function has to be used around, stated as a test so nobody
+   * "fixes" it: `rejectOrder` marks every pending step skipped so the ladder
+   * can say "never reached", which makes this true for stages that were simply
+   * never arrived at. That is why only a LIVE order may be asked.
+   */
+  it("also reports true for merely-unreached stages on a rejected order", () => {
+    const killed = orderAt(3, { status: "Rejected" });
+    killed.steps = killed.steps.map((s) =>
+      s.status === "pending" ? { ...s, status: "skipped" } : s
+    );
+    expect(stageSkipped(killed, 6)).toBe(true);
+    expect(stageSkipped(killed, 8)).toBe(true);
+  });
+});
+
+describe("nextLiveStageIndex — where an order actually goes next", () => {
+  it("matches nextStageIndex on a flour order", () => {
+    const o = orderAt(5);
+    for (const i of [1, 2, 3, 4, 5, 6, 7]) {
+      expect(nextLiveStageIndex(o, i)).toBe(nextStageIndex(i));
+    }
+  });
+
+  it("jumps 5 → 7 on an untested order, skipping the lab", () => {
+    expect(nextLiveStageIndex(untestedOrderAt(5), 5)).toBe(7);
+  });
+
+  it("returns null at the final stage, which is what posts the order", () => {
+    expect(nextLiveStageIndex(orderAt(8), 8)).toBeNull();
+    expect(nextLiveStageIndex(untestedOrderAt(8), 8)).toBeNull();
+  });
+
+  /**
+   * `currentStageIndex` is monotonic, and the entire visibility model is one
+   * indexed range query because of it. Skipping may only ever move the pointer
+   * further forward.
+   */
+  it("is strictly forward-only, on both routes", () => {
+    for (const o of [orderAt(5), untestedOrderAt(5)]) {
+      for (const i of [1, 2, 3, 4, 5, 6, 7, 8]) {
+        const n = nextLiveStageIndex(o, i);
+        expect(n === null || n > i).toBe(true);
+      }
+    }
+  });
+
+  it("does not skip stage 6 just because it is already signed", () => {
+    // A completed stage is not a skipped one: an order that HAS been through
+    // the lab must still be reported as having 7 next, not 8.
+    const done = orderAt(7);
+    expect(nextLiveStageIndex(done, 6)).toBe(7);
   });
 });
 

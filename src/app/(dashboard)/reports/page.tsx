@@ -11,7 +11,8 @@ import { MultiCombobox } from "@/components/ui/multi-combobox";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { QcStatusBadge } from "@/components/ui/qc-status-badge";
 import { formatDate } from "@/lib/utils";
-import type { LabStatus } from "@/types";
+import { productPickerOptions } from "@/types";
+import type { ILabProduct, LabStatus, LinePackaging } from "@/types";
 
 /**
  * Hours, told at the scale a person would use.
@@ -59,7 +60,7 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true);
 
   const [customers, setCustomers] = useState<{ _id: string; name: string; nameAr?: string }[]>([]);
-  const [products, setProducts] = useState<{ _id: string; name: string; nameAr?: string }[]>([]);
+  const [products, setProducts] = useState<ILabProduct[]>([]);
 
   useEffect(() => {
     fetch("/api/customers?limit=1000").then((r) => r.json()).then((d) => setCustomers(d.customers || [])).catch(() => {});
@@ -102,7 +103,7 @@ export default function ReportsPage() {
 
   const active = TABS.find((x) => x.key === tab)!;
   const customerOptions = customers.map((c) => ({ value: c._id, label: (lang === "ar" && c.nameAr) || c.name }));
-  const productOptions = products.map((p) => ({ value: p._id, label: (lang === "ar" && p.nameAr) || p.name }));
+  const productOptions = productPickerOptions(products, lang);
 
   return (
     <div className="space-y-4">
@@ -253,7 +254,8 @@ function OrdersTable({ title, orders }: { title: string; orders: VarianceOrderRo
 // ── orders — every order, line by line ──────────────────────────────────────
 interface OrderDetailLine {
   productId: string; product: string; productAr?: string;
-  bagWeightKg: number; bagCount: number; lineWeightKg: number;
+  packaging?: LinePackaging;
+  bagWeightKg: number | null; bagCount: number | null; lineWeightKg: number;
   actualWeightKg: number | null; labStatus: string | null;
 }
 interface OrderDetailRow {
@@ -320,8 +322,21 @@ function OrdersDetailReport({ data }: { data: Record<string, never> }) {
                   </>
                 )}
                 <td className="py-2 text-slate-700">{(lang === "ar" && l.productAr) || l.product}</td>
-                <Num v={`${l.bagWeightKg} kg`} />
-                <Num v={l.bagCount} />
+                {/* A poured line has no sack size and nothing to count. One
+                    merged cell saying so beats two dashes the reader has to
+                    interpret. */}
+                {l.packaging === "bulk" ? (
+                  <td className="py-2 px-3 text-center whitespace-nowrap" colSpan={2}>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                      {t("Bulk", "صبّ")}
+                    </span>
+                  </td>
+                ) : (
+                  <>
+                    <Num v={l.bagWeightKg != null ? `${l.bagWeightKg} kg` : "—"} />
+                    <Num v={l.bagCount ?? "—"} />
+                  </>
+                )}
                 <Num v={(l.lineWeightKg / 1000).toFixed(3)} />
                 <Num v={l.actualWeightKg != null ? (l.actualWeightKg / 1000).toFixed(3) : null} />
                 <Num

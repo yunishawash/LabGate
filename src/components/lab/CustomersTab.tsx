@@ -20,6 +20,7 @@ interface CustomerRow {
   code?: string;
   phone?: string;
   contactName?: string;
+  salesRepName?: string;
   sampleCount?: number;
   lastSampleDate?: string | null;
   passCount?: number;
@@ -28,7 +29,7 @@ interface CustomerRow {
   inSpecPct?: number | null;
 }
 
-const EMPTY = { name: "", nameAr: "", code: "", phone: "", contactName: "", address: "" };
+const EMPTY = { name: "", nameAr: "", code: "", phone: "", contactName: "", salesRepName: "", address: "" };
 
 export function CustomersTab({ onChanged, onOpen }: { onChanged?: () => void; onOpen?: (id: string) => void }) {
   const { lang, t } = useLang();
@@ -78,7 +79,7 @@ export function CustomersTab({ onChanged, onOpen }: { onChanged?: () => void; on
     setEditingId(c._id);
     setForm({
       name: c.name, nameAr: c.nameAr ?? "", code: c.code ?? "",
-      phone: c.phone ?? "", contactName: c.contactName ?? "", address: c.address ?? "",
+      phone: c.phone ?? "", contactName: c.contactName ?? "", salesRepName: c.salesRepName ?? "", address: c.address ?? "",
     });
     setError("");
     setOpen(true);
@@ -357,6 +358,10 @@ export function CustomersTab({ onChanged, onOpen }: { onChanged?: () => void; on
               <div className="space-y-1.5 sm:col-span-2">
                 <Label>{t("Contact person", "جهة الاتصال")}</Label>
                 <Input value={form.contactName} onChange={(e) => setForm((f) => ({ ...f, contactName: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label>{t("Sales rep", "اسم المندوب")}</Label>
+                <Input value={form.salesRepName} onChange={(e) => setForm((f) => ({ ...f, salesRepName: e.target.value }))} maxLength={120} />
               </div>
             </div>
             {error && (

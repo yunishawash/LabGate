@@ -6,7 +6,7 @@ import { useState } from "react";
 import { useSession } from "next-auth/react";
 import {
   LayoutDashboard, ClipboardList, CheckSquare, PenLine, FlaskConical,
-  Users2, BarChart3, ScrollText, UserCog, Activity,
+  Users2, BarChart3, ScrollText, UserCog, Activity, Settings2,
   Menu, X, Languages, LifeBuoy,
   Bell,
 } from "lucide-react";
@@ -43,6 +43,7 @@ const NAV: NavItem[] = [
   { href: "/audit-log",   label: "Audit Trail",     labelAr: "سجل التدقيق",   icon: <ScrollText      size={18} />, module: "audit-log" },
   { href: "/users",       label: "Users",           labelAr: "المستخدمون",    icon: <UserCog         size={18} />, module: "users" },
   { href: "/health",      label: "System Health",   labelAr: "صحة النظام",    icon: <Activity        size={18} />, module: "health" },
+  { href: "/settings",    label: "Settings",        labelAr: "إعدادات النظام", icon: <Settings2       size={18} />, module: "settings" },
 ];
 
 interface SidebarProps {

@@ -48,8 +48,29 @@ export function MultiCombobox({
     return t(`${values.length} selected`, `${values.length} محدَّد`);
   })();
 
+  /**
+   * `modal` on the Popover below is load-bearing — do not remove it as
+   * redundant.
+   *
+   * The popover is portalled to `document.body`. When it opens inside a
+   * Dialog, `@radix-ui/react-dialog` has wrapped the overlay in `RemoveScroll`
+   * with `shards: [contentRef]`, and that lock cancels the wheel for any
+   * target that is neither inside the lock nor inside a shard. The portalled
+   * list is in neither, so `preventDefault()` ran on every wheel event and the
+   * dropdown would not scroll with a mouse — while keyboard nav and a
+   * programmatic `scrollTop` both worked, which is what made it look like a
+   * styling problem rather than a scroll-lock one.
+   *
+   * `modal` gives the popover its own `RemoveScroll`, which registers the
+   * event as handled-and-allowed before the dialog's lock sees it.
+   *
+   * Verified both ways: the wheel scrolls, and nesting the two locks does not
+   * leave the dialog dead afterwards — typing, adding a line, opening a second
+   * dropdown and closing everything all still work, on a page as well as
+   * inside a dialog.
+   */
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpen} modal>
       <PopoverTrigger asChild>
         <button
           id={id}

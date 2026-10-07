@@ -69,9 +69,25 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   const like = order as unknown as OrderLike & {
     createdById: unknown; orderNumber: string;
+    labRequired?: boolean;
     lines: { productId: unknown; product: string; productAr: string }[];
     labSampleIds: unknown[];
   };
+
+  /**
+   * An order of bran, germ, semolina or wheat has no stage 6 — the step was
+   * written `skipped` at creation and the order never stops there, so
+   * `resolveSlot` below would already refuse this call. It would refuse it
+   * with "it is not your turn", though, which is the wrong sentence: it reads
+   * as a timing problem on an order that will never have a turn to take. Say
+   * the actual reason.
+   *
+   * `!== false` rather than a truthiness test: orders created before this
+   * field existed have no value for it, and every one of them is flour.
+   */
+  if (like.labRequired === false) {
+    return conflict("This order carries no lab-tested product, so it has no lab stage.");
+  }
   const shaped: OrderLike = {
     status: like.status,
     currentStageIndex: like.currentStageIndex,
