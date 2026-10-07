@@ -133,8 +133,22 @@ async function main() {
       orderRequiresLabTest: { $ne: false }, isActive: true, parentId: { $ne: null },
     }).select("name nameAr parentId").lean()) as
       { _id: mongoose.Types.ObjectId; name: string; parentId: mongoose.Types.ObjectId } | null;
-    const untested = (await LabProduct.findOne({ orderRequiresLabTest: false, isActive: true })
-      .select("name nameAr").lean()) as { _id: mongoose.Types.ObjectId; name: string } | null;
+    /**
+     * An untested LEAF, not merely an untested row.
+     *
+     * Before the office register was imported, نخالة was a type with no
+     * grades and therefore orderable itself. It has five grades now, so
+     * picking the first untested row would hand this test a category that
+     * `buildOrderLines` correctly refuses. What the order tests need is
+     * something that can actually go on a line.
+     */
+    const untestedIds = (await LabProduct.find({ orderRequiresLabTest: false, isActive: true })
+      .select("_id name nameAr").lean()) as { _id: mongoose.Types.ObjectId; name: string }[];
+    const parentsWithGrades = new Set(
+      (await LabProduct.find({ parentId: { $in: untestedIds.map((u) => u._id) }, isActive: true })
+        .distinct("parentId")).map(String)
+    );
+    const untested = untestedIds.find((u) => !parentsWithGrades.has(String(u._id))) ?? null;
     if (!flour || !untested) {
       throw new Error("catalog not migrated — run npm run migrate:product-catalog");
     }
@@ -150,8 +164,25 @@ async function main() {
     const gradeCount = await LabProduct.countDocuments({ parentId: flour.parentId, isActive: true });
     check("the type carries every flour grade", gradeCount >= 8, `${gradeCount} grades`);
 
-    const untestedChildren = await LabProduct.countDocuments({ parentId: untested._id, isActive: true });
-    check(`${untested.name} is a type that is its own leaf`, untestedChildren === 0);
+    /**
+     * The RULE, not yesterday's catalogue: whatever an order line points at
+     * must be a leaf. This used to assert "نخالة has no grades", which was a
+     * fact about the data and stopped being true the moment the register was
+     * imported — a passing test that only described the seed.
+     */
+    const nonLeafOffered = (await LabProduct.find({ isActive: true }).select("_id name").lean())
+      .filter((p) => parentsWithGrades.has(String((p as { _id: unknown })._id)));
+    check(
+      `the untested product used below is a leaf (${untested.name})`,
+      !parentsWithGrades.has(String(untested._id))
+    );
+    check(
+      "every type that has grades is excluded from order lines",
+      (await Promise.all(nonLeafOffered.map(async (p) =>
+        !(await buildOrderLines([{ productId: String((p as { _id: unknown })._id), packaging: "bagged", bagWeightKg: 50, bagCount: 1 }])).ok
+      ))).every(Boolean),
+      `${nonLeafOffered.length} type(s) with grades`
+    );
 
     // A type with grades must never reach an order line.
     const typeOnLine = await buildOrderLines([

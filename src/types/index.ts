@@ -74,8 +74,15 @@ export interface IUser {
 
 // ── Orders ───────────────────────────────────────────────────────────────────
 
-/** The five real sack sizes the mill fills. Nothing else is accepted. */
-export const BAG_WEIGHTS = [10, 25, 30, 50, 60] as const;
+/**
+ * The sack sizes the mill fills. Nothing else is accepted.
+ *
+ * 1 kg is the retail bag (nine products in the register carry it) and 40 kg is
+ * a bran sack; both were missing, so those products could not be ordered at
+ * the size they are actually sold in. Ascending, because the order dialog
+ * renders this list as-is.
+ */
+export const BAG_WEIGHTS = [1, 10, 25, 30, 40, 50, 60] as const;
 export type BagWeight = (typeof BAG_WEIGHTS)[number];
 
 /**
@@ -340,11 +347,28 @@ export interface ILabProductSpec {
   overrideId?: string | null;
 }
 
+/** A city a customer belongs to — its own collection so reports can group by
+ *  it. See models/City. */
+export interface ICity {
+  _id: string;
+  name: string;
+  nameAr?: string;
+  isActive: boolean;
+}
+
 export interface ILabCustomer {
   _id: string;
   name: string;
   nameAr?: string;
   code?: string;
+  /** The office register's own number ("C0000032"). */
+  customerNo?: string;
+  /** Joined by the API, so a row can be displayed and grouped without a second
+   *  lookup. A bare string on a payload the API did not join. */
+  cityId?: string | ICity | null;
+  salesRepNo?: string;
+  accountOpenedAt?: string | null;
+  idNumber?: string;
   phone?: string;
   contactName?: string;
   salesRepName?: string;

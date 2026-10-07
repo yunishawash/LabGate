@@ -6,6 +6,7 @@ import {
   normalizeName, isDuplicateKeyError,
 } from "@/lib/apiHelpers";
 import LabCustomer from "@/models/LabCustomer";
+import City from "@/models/City";
 import LabSample from "@/models/LabSample";
 import mongoose from "mongoose";
 
@@ -168,8 +169,32 @@ export async function PUT(req: NextRequest, { params }: Params) {
   }
   for (const [field, max] of [
     ["nameAr", 200], ["code", 40], ["phone", 40], ["contactName", 120], ["salesRepName", 120],
+    ["customerNo", 40], ["salesRepNo", 40], ["idNumber", 60],
   ] as const) {
     if (field in body) update[field] = str(body[field], max);
+  }
+
+  /** Chosen from the list, never typed — see the POST route. Explicit `null`
+   *  clears it; an id naming no live city is refused. */
+  if ("cityId" in body) {
+    if (!body.cityId) {
+      update.cityId = null;
+    } else {
+      const cityId = oid(body.cityId);
+      if (!cityId) return badRequest("Invalid cityId");
+      if (!(await City.exists({ _id: cityId, isActive: true }))) return badRequest("Unknown city");
+      update.cityId = cityId;
+    }
+  }
+
+  if ("accountOpenedAt" in body) {
+    if (!body.accountOpenedAt) {
+      update.accountOpenedAt = null;
+    } else {
+      const d = new Date(str(body.accountOpenedAt, 40));
+      if (Number.isNaN(d.getTime())) return badRequest("Invalid accountOpenedAt");
+      update.accountOpenedAt = d;
+    }
   }
   // Longer free-text fields: rejected if too long, not silently truncated.
   for (const [field, max, label] of [

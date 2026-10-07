@@ -148,7 +148,15 @@ export async function orderPermissions(
     canWeigh: granted.some((g) => g.stage.kind === "weigh"),
     canEdit: canEdit(order, actor),
     canWriteCollections: ["accountant", "finance_manager", "admin"].includes(actor.role),
-    canWritePacking: ["weighbridge", "admin"].includes(actor.role),
+    /**
+     * The Packing note is the Technical Manager's, and only while the order
+     * is at his stage — the same window the annotations route enforces, so
+     * the screen can never offer a box the API will refuse.
+     */
+    canWritePacking:
+      (actor.role === "technical_manager" || actor.role === "admin") &&
+      order.status === "Pending" &&
+      stagesAt(order.currentStageIndex).some((s) => s.key === "technical_manager_approval"),
     actableStageKeys: granted.map((g) => g.stage.key),
     actingAs: standIn
       ? {

@@ -19,11 +19,13 @@ export type BlockKey =
   | "coverage"        // J — delegations & absence
   | "volumeTrend"     // K — tonnage by month, rejection rate overlaid (bar + line)
   | "qualityTrend"    // L — in-spec % by month (line)
-  | "productMix";     // M — tonnage share by product, last 12 months (donut)
+  | "productMix"      // M — tonnage share by product, last 12 months (donut)
+  | "ordersByCity"    // N — decided orders per city, approved vs rejected (stacked bars)
+  | "tonsByCity";     // O — share of tonnage sold per city (donut), beside N
 
 export const ROLE_BLOCKS: Record<string, BlockKey[]> = {
   sales_coordinator: ["myOrders", "waitingOnMe", "coverage"],
-  sales_manager:     ["waitingOnMe", "thisMonth", "myOrders", "coverage"],
+  sales_manager:     ["waitingOnMe", "thisMonth", "myOrders", "ordersByCity", "tonsByCity", "coverage"],
   finance_manager:   ["waitingOnMe", "thisMonth", "coverage"],
   accountant:        ["waitingOnMe", "coverage"],
   // "rejections" ("Where orders die") was dropped from the dashboard on the
@@ -37,11 +39,11 @@ export const ROLE_BLOCKS: Record<string, BlockKey[]> = {
   // doing better or worse than it was". GM/admin only: they're the roles
   // whose visibility spans every order, so a monthly total means what it
   // says rather than being a fragment of one.
-  general_manager:   ["stuck", "waitingOnMe", "thisMonth", "quality", "volumeTrend", "qualityTrend", "productMix", "coverage"],
+  general_manager:   ["stuck", "waitingOnMe", "thisMonth", "quality", "volumeTrend", "qualityTrend", "productMix", "ordersByCity", "tonsByCity", "coverage"],
   technical_manager: ["waitingOnMe", "labQueue", "quality", "qualityTrend", "coverage"],
   lab_technician:    ["labQueue", "quality", "coverage"],
   weighbridge:       ["readyToWeigh", "coverage"],
-  admin:             ["stuck", "thisMonth", "volumeTrend", "qualityTrend", "productMix", "coverage"],
+  admin:             ["stuck", "thisMonth", "volumeTrend", "qualityTrend", "productMix", "ordersByCity", "tonsByCity", "coverage"],
 };
 
 /** A role outside the chain still gets a page, not a crash. */

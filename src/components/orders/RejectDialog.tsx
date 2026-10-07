@@ -79,7 +79,10 @@ export function RejectDialog({
       const res = await fetch(`/api/orders/${orderId}/reject`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason: reason.trim(), reasonId: reasonId || undefined }),
+        body: JSON.stringify(
+          // Exactly one of the two, never both — see the note above.
+          fromList ? { reasonId } : { reason: reason.trim() }
+        ),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -156,29 +159,31 @@ export function RejectDialog({
             </div>
           )}
 
-          <div className="space-y-1.5">
-            <Label>
-              {fromList
-                ? t("Note (optional)", "ملاحظة (اختياري)")
-                : `${t("Reason", "السبب")} *`}
-            </Label>
-            <Textarea
-              rows={3}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder={
-                fromList
-                  ? t("Anything to add about this particular order?", "هل من إضافة بخصوص هذه الطلبية تحديدًا؟")
-                  : t("Why is this order being rejected?", "ما سبب رفض هذه الطلبية؟")
-              }
-            />
-            <p className="text-xs text-slate-400">
-              {t(
-                "Everyone who can see this order will see this reason.",
-                "كل من يرى هذه الطلبية سيرى هذا السبب."
-              )}
-            </p>
-          </div>
+          {/*
+            No free-text box for a rejection from the list.
+            The list exists so "البضاعة غير متوفرة" is ONE fact in the
+            rejection report rather than twelve spellings of one, and a note
+            appended to the chosen reason puts the spellings straight back —
+            in the report, in the export and on the printed form. The
+            Technical Manager picks; everybody else still writes.
+          */}
+          {!fromList && (
+            <div className="space-y-1.5">
+              <Label>{t("Reason", "السبب")} *</Label>
+              <Textarea
+                rows={3}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder={t("Why is this order being rejected?", "ما سبب رفض هذه الطلبية؟")}
+              />
+              <p className="text-xs text-slate-400">
+                {t(
+                  "Everyone who can see this order will see this reason.",
+                  "كل من يرى هذه الطلبية سيرى هذا السبب."
+                )}
+              </p>
+            </div>
+          )}
 
           {error && (
             <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>

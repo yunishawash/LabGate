@@ -5,6 +5,8 @@ import { Plus, Search, Users2, Pencil, Archive, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Combobox } from "@/components/ui/combobox";
+import type { ICity } from "@/types";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -18,6 +20,13 @@ interface CustomerRow {
   name: string;
   nameAr?: string;
   code?: string;
+  /** The office register's own number, and the city it joins to — both come
+   *  from `/api/customers`, which populates the city. */
+  customerNo?: string;
+  cityId?: { _id: string; name: string; nameAr?: string } | string | null;
+  salesRepNo?: string;
+  accountOpenedAt?: string | null;
+  idNumber?: string;
   phone?: string;
   contactName?: string;
   salesRepName?: string;
@@ -29,7 +38,11 @@ interface CustomerRow {
   inSpecPct?: number | null;
 }
 
-const EMPTY = { name: "", nameAr: "", code: "", phone: "", contactName: "", salesRepName: "", address: "" };
+const EMPTY = {
+  name: "", nameAr: "", code: "", phone: "", contactName: "",
+  salesRepName: "", address: "",
+  customerNo: "", cityId: "", salesRepNo: "", accountOpenedAt: "", idNumber: "",
+};
 
 export function CustomersTab({ onChanged, onOpen }: { onChanged?: () => void; onOpen?: (id: string) => void }) {
   const { lang, t } = useLang();
@@ -54,6 +67,13 @@ export function CustomersTab({ onChanged, onOpen }: { onChanged?: () => void; on
   const [error, setError] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [rowError, setRowError] = useState("");
+  /** The city list backing the dropdown. A city is picked, never typed —
+   *  grouping reports by it is the whole reason it is a collection. */
+  const [cities, setCities] = useState<ICity[]>([]);
+
+  useEffect(() => {
+    fetch("/api/cities").then((r) => r.json()).then((d) => setCities(d.cities || [])).catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -80,6 +100,12 @@ export function CustomersTab({ onChanged, onOpen }: { onChanged?: () => void; on
     setForm({
       name: c.name, nameAr: c.nameAr ?? "", code: c.code ?? "",
       phone: c.phone ?? "", contactName: c.contactName ?? "", salesRepName: c.salesRepName ?? "", address: c.address ?? "",
+      customerNo: c.customerNo ?? "",
+      // The API joins the city, so unwrap it back to the id the form posts.
+      cityId: typeof c.cityId === "string" ? c.cityId : c.cityId?._id ?? "",
+      salesRepNo: c.salesRepNo ?? "",
+      accountOpenedAt: c.accountOpenedAt ? c.accountOpenedAt.slice(0, 10) : "",
+      idNumber: c.idNumber ?? "",
     });
     setError("");
     setOpen(true);
@@ -151,7 +177,7 @@ export function CustomersTab({ onChanged, onOpen }: { onChanged?: () => void; on
           <Input
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-            placeholder={t("Name or code", "الاسم أو الكود")}
+            placeholder={t("Name or customer no.", "الاسم أو رقم الزبون")}
             className="h-9 w-64 ps-8"
           />
         </div>
@@ -177,6 +203,7 @@ export function CustomersTab({ onChanged, onOpen }: { onChanged?: () => void; on
           <thead className="bg-slate-50 border-b border-slate-200">
             <tr className="text-xs uppercase tracking-wide text-slate-500">
               <th className="text-start font-medium px-4 py-2.5">{t("Customer", "الزبون")}</th>
+              <th className="text-start font-medium px-3 py-2.5">{t("City", "المدينة")}</th>
               <th className="text-start font-medium px-3 py-2.5">{t("Contact", "جهة الاتصال")}</th>
               <th className="text-start font-medium px-3 py-2.5">{t("Samples", "العيّنات")}</th>
               <th className="text-start font-medium px-3 py-2.5">{t("Last sample", "آخر عيّنة")}</th>
@@ -186,10 +213,10 @@ export function CustomersTab({ onChanged, onOpen }: { onChanged?: () => void; on
           </thead>
           <tbody className="divide-y divide-slate-100">
             {loading ? (
-              <tr><td colSpan={canManage ? 6 : 5} className="px-4 py-10 text-center text-slate-400">{t("Loading…", "جارٍ التحميل…")}</td></tr>
+              <tr><td colSpan={canManage ? 7 : 6} className="px-4 py-10 text-center text-slate-400">{t("Loading…", "جارٍ التحميل…")}</td></tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={canManage ? 6 : 5} className="px-4 py-12 text-center">
+                <td colSpan={canManage ? 7 : 6} className="px-4 py-12 text-center">
                   <Users2 size={28} className="mx-auto text-slate-300 mb-2" />
                   <p className="text-slate-500">
                     {search
@@ -217,7 +244,18 @@ export function CustomersTab({ onChanged, onOpen }: { onChanged?: () => void; on
                       </span>
                     )}
                   </div>
-                  {c.code && <span className="text-xs text-slate-400 font-mono">{c.code}</span>}
+                  {/* The register's number and city, under the name — the two
+                      facts staff use to tell two similarly-named shops apart. */}
+                  <span className="text-xs text-slate-400 flex items-center gap-1.5 flex-wrap">
+                    {c.customerNo
+                      ? <bdi className="font-mono">{c.customerNo}</bdi>
+                      : c.code && <bdi className="font-mono">{c.code}</bdi>}
+                  </span>
+                </td>
+                <td className="px-3 py-2.5 text-slate-600">
+                  {c.cityId && typeof c.cityId === "object"
+                    ? <bdi>{(lang === "ar" && c.cityId.nameAr) || c.cityId.name}</bdi>
+                    : <span className="text-slate-300">—</span>}
                 </td>
                 <td className="px-3 py-2.5 text-slate-600">
                   <div>{c.contactName || "—"}</div>
@@ -348,8 +386,52 @@ export function CustomersTab({ onChanged, onOpen }: { onChanged?: () => void; on
                 <Input value={form.nameAr} onChange={(e) => setForm((f) => ({ ...f, nameAr: e.target.value }))} />
               </div>
               <div className="space-y-1.5">
-                <Label>{t("Code", "الكود")}</Label>
-                <Input value={form.code} onChange={(e) => setForm((f) => ({ ...f, code: e.target.value }))} />
+                <Label>{t("Customer no.", "رقم الزبون")}</Label>
+                <Input
+                  value={form.customerNo} dir="ltr" maxLength={40}
+                  placeholder="C0000032"
+                  onChange={(e) => setForm((f) => ({ ...f, customerNo: e.target.value }))}
+                />
+              </div>
+
+              {/* Picked, never typed. A typed city makes "نابلس" and "نابلس "
+                  two cities in every report, which is exactly what the
+                  collection exists to prevent. */}
+              <div className="space-y-1.5">
+                <Label>{t("City", "المدينة")}</Label>
+                <Combobox
+                  triggerClassName="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100 cursor-pointer"
+                  value={form.cityId}
+                  onChange={(v) => setForm((f) => ({ ...f, cityId: v }))}
+                  placeholder={t("Choose…", "اختر…")}
+                  searchPlaceholder={t("Search cities…", "ابحث عن مدينة…")}
+                  options={cities.map((c) => ({ value: c._id, label: (lang === "ar" && c.nameAr) || c.name }))}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>{t("Sales rep no.", "رقم المندوب")}</Label>
+                <Input
+                  value={form.salesRepNo} dir="ltr" maxLength={40}
+                  placeholder="SM001"
+                  onChange={(e) => setForm((f) => ({ ...f, salesRepNo: e.target.value }))}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>{t("Account opened", "تاريخ فتح الحساب")}</Label>
+                <Input
+                  type="date" value={form.accountOpenedAt}
+                  onChange={(e) => setForm((f) => ({ ...f, accountOpenedAt: e.target.value }))}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>{t("ID number", "رقم الهوية")}</Label>
+                <Input
+                  value={form.idNumber} dir="ltr" maxLength={60}
+                  onChange={(e) => setForm((f) => ({ ...f, idNumber: e.target.value }))}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>{t("Phone", "الهاتف")}</Label>

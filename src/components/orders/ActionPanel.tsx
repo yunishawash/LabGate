@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, X, Scale, FlaskConical, AlertTriangle, UserCheck, Lock, MessageSquareText } from "lucide-react";
 import { useLang } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,7 @@ export function ActionPanel({
   order: OrderRow & {
     customerId?: string;
     collections?: { note?: string };
+    packing?: { note?: string };
     lines: {
       productId: string; product?: string; productAr?: string;
       packaging?: LinePackaging;
@@ -44,7 +45,10 @@ export function ActionPanel({
   const { lang, t } = useLang();
   const p = (order.permissions ?? {}) as Perms;
 
+  /** Seeded from the saved Packing note at that stage, so re-approving after
+   *  a correction does not silently blank what was already written. */
   const [note, setNote] = useState("");
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -63,6 +67,20 @@ export function ActionPanel({
   // CollectionsPackingPanel, independently of this action.
   const financeNoteMissing =
     stage?.key === "finance_manager_approval" && !order.collections?.note?.trim();
+
+  /** The Technical Manager's stage, where the note box is the Packing note —
+   *  the same key the approve route branches on, so the two cannot drift. */
+  const isPackingStage = stage?.key === "technical_manager_approval";
+
+  /**
+   * Seed the box from whatever is already saved at the Packing stage. Without
+   * it, a Technical Manager who wrote a note, left the page and came back
+   * would see an empty box and approve — blanking what he had written, in a
+   * field that prints on a signed form.
+   */
+  useEffect(() => {
+    if (isPackingStage) setNote(order.packing?.note ?? "");
+  }, [isPackingStage, order.packing?.note]);
 
   const approve = async () => {
     setBusy(true);
@@ -158,19 +176,15 @@ export function ActionPanel({
         </div>
       )}
 
-      {p.stalled && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 flex items-start gap-2">
-          <AlertTriangle size={15} className="text-red-600 mt-0.5 flex-shrink-0" />
-          <p className="text-xs text-red-800">
-            {t("Stalled — the", "متوقّفة — ")}{" "}
-            <strong>{ROLE_LABELS[p.stalled.role as UserRole]?.[lang] ?? p.stalled.role}</strong>{" "}
-            {t(
-              "is away and this stage has no deputy. It cannot move until they return.",
-              "غائب ولا نائب لهذه المرحلة. لن تتحرّك الطلبية حتى يعود."
-            )}
-          </p>
-        </div>
-      )}
+      {/*
+        The "stalled — X is away and this stage has no deputy" banner was
+        removed on 2026-10-07 at the client's request.
+
+        `permissions.stalled` is still computed and still returned by the API:
+        it is what the stalled-orders report and the admin notification read,
+        and both remain. Only this panel stopped repeating it to a person who
+        can do nothing about it.
+      */}
 
       {financeNoteMissing && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 flex items-start gap-2">
@@ -188,13 +202,35 @@ export function ActionPanel({
         <>
           {p.canApprove && !financeNoteMissing && (
             <div className="space-y-1.5">
-              <Label>{t("Note (optional)", "ملاحظة (اختياري)")}</Label>
+              {/*
+                At the Technical Manager's stage this one box IS the Packing
+                note printed on the MS-SC/F7 form, so it says so. Labelling it
+                "ملاحظة (اختياري)" here would ask him to write a note without
+                telling him it lands in a named box on a signed sheet.
+              */}
+              <Label>
+                {isPackingStage
+                  ? t("Packing dept. note", "ملاحظات قسم التعبئة")
+                  : t("Note (optional)", "ملاحظة (اختياري)")}
+              </Label>
               <Textarea
                 rows={2}
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder={t("Anything the next person should know", "أي ملاحظة يحتاج من بعدك معرفتها")}
+                placeholder={
+                  isPackingStage
+                    ? t("What the packing floor needs to know", "ما يحتاج قسم التعبئة معرفته")
+                    : t("Anything the next person should know", "أي ملاحظة يحتاج من بعدك معرفتها")
+                }
               />
+              {isPackingStage && (
+                <p className="text-xs text-slate-400">
+                  {t(
+                    "Printed on the order form under \"ملاحظات قسم التعبئة\". Saved when you approve.",
+                    "تُطبع على نموذج الطلبية تحت «ملاحظات قسم التعبئة». تُحفظ عند الاعتماد."
+                  )}
+                </p>
+              )}
             </div>
           )}
 

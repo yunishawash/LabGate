@@ -98,14 +98,25 @@ export async function POST(
 
   /**
    * `reason` stays the single human-readable field every existing reader
-   * already prints — the timeline, the notification, the export, the report.
-   * A chosen reason fills it with its label, and a note is appended rather
-   * than replacing it, so nothing downstream has to learn about `reasonId` to
-   * keep working.
+   * already prints — the timeline, the notification, the export, the report —
+   * so nothing downstream has to learn about `reasonId` to keep working.
+   *
+   * A reason from the list is stored as its LABEL ALONE. Appending a free note
+   * to it would put back exactly what the list removes: the report groups by
+   * this text, and "عدم توفر البضاعة — الكمية ناقصة" and "عدم توفر البضاعة"
+   * are two rows for one fact. The Technical Manager picks; everybody else
+   * writes.
+   *
+   * Free text sent ALONGSIDE a picked reason is refused rather than dropped —
+   * only a stale tab can send it, and silently discarding what somebody typed
+   * is worse than telling them it is not accepted here.
    */
-  const reason = reasonLabel
-    ? freeText ? `${reasonLabel} — ${freeText}` : reasonLabel
-    : freeText;
+  if (reasonLabel && freeText) {
+    return badRequest(
+      "A rejection chosen from the list carries no note — reload the page and try again."
+    );
+  }
+  const reason = reasonLabel || freeText;
 
   // A rejection without a stated reason is a dead end nobody can learn from —
   // and it is what the rejection-analysis report reads.

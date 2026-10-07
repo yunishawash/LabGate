@@ -964,7 +964,13 @@ tr, td, th, table, .notes-table, .approval-table, .header-table, .items-table, .
       <td>
         <div class="note-title">ملاحظات قسم التعبئة :</div>
         <div class="note-body">${esc(order.packing?.note || "")}</div>
-        ${approvalNote("ملاحظات المدير الفنّي :", technicalManagerStep)}
+        <!--
+          The Technical Manager's own approval note is deliberately NOT printed
+          here (removed 2026-10-07, at the client's request). His SIGNATURE
+          below still is — that was the gap worth fixing on this sheet. The
+          note itself remains on the approval-chain page of this same PDF,
+          where every role's note is shown uniformly.
+        -->
         <div class="signature-inline">
           <span class="bold">توقيع المدير الفنّي:</span>
           ${

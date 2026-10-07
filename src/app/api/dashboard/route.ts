@@ -360,6 +360,118 @@ export async function GET(req: NextRequest) {
     };
   }
 
+  /**
+   * ── N · Decided orders per city — approved vs rejected ──────────────────
+   *
+   * Only DECIDED orders. The two segments sum to the bar's height, which is
+   * what makes a stack honest: approved + rejected = every order this city
+   * has an answer for. Orders still in the chain are deliberately left out —
+   * folding "not yet decided" into "not approved" would read as a rejection
+   * the city never received, and would make the total move as orders age
+   * rather than as decisions are taken.
+   *
+   * Joined through the customer, because a city belongs to the customer and
+   * an order belongs to the customer — an order has no city of its own.
+   */
+  if (want("ordersByCity")) {
+    const rows = await SalesOrder.aggregate([
+      {
+        $match: andFilters(
+          visible,
+          { status: { $in: ["Posted", "Rejected"] }, orderDate: { $gte: windowStart, $lte: windowEnd } },
+          orderExtra
+        ),
+      },
+      { $lookup: { from: "labcustomers", localField: "customerId", foreignField: "_id", as: "c" } },
+      { $unwind: { path: "$c", preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: "cities", localField: "c.cityId", foreignField: "_id", as: "city" } },
+      { $unwind: { path: "$city", preserveNullAndEmptyArrays: true } },
+      {
+        $group: {
+          _id: { cityId: "$city._id", name: "$city.name", nameAr: "$city.nameAr" },
+          approved: { $sum: { $cond: [{ $eq: ["$status", "Posted"] }, 1, 0] } },
+          rejected: { $sum: { $cond: [{ $eq: ["$status", "Rejected"] }, 1, 0] } },
+        },
+      },
+      { $sort: { approved: -1, rejected: -1 } },
+    ]);
+
+    /**
+     * Customers with no city on file are kept as their own bucket, not
+     * dropped — dropping them would make the bars stop adding up to the
+     * period's orders — but it sorts LAST however big it is, the same place
+     * "Others" takes in the product donut. A miscellaneous bucket at the head
+     * of a ranked chart reads as the top city.
+     */
+    const withCity = rows.filter((r) => r._id.cityId);
+    const noCity = rows.filter((r) => !r._id.cityId);
+
+    data.ordersByCity = {
+      rows: [...withCity, ...noCity].map((r) => ({
+        cityId: String(r._id.cityId ?? ""),
+        // A customer with no city still has orders; they are shown as their
+        // own bar rather than dropped, so the totals still add up.
+        city: (r._id.name as string) ?? "",
+        cityAr: (r._id.nameAr as string) ?? "",
+        approved: r.approved as number,
+        rejected: r.rejected as number,
+      })),
+    };
+  }
+
+  /**
+   * ── O · Share of tonnage sold, per city ─────────────────────────────────
+   *
+   * POSTED orders only — "sold" means it left the mill, not that somebody
+   * asked for it — and the ACTUAL net weight the weighbridge recorded, falling
+   * back to the ordered weight for orders posted before per-line weighing
+   * existed. The same expression `volumeTrend` uses, so the two charts cannot
+   * disagree about what a tonne is.
+   *
+   * Top seven cities plus an "Others" bucket: the categorical palette has
+   * seven hues and an eighth is never a generated colour. Sixteen slices would
+   * be unreadable anyway.
+   */
+  if (want("tonsByCity")) {
+    const rows = await SalesOrder.aggregate([
+      {
+        $match: andFilters(
+          visible,
+          { status: "Posted", postedAt: { $gte: windowStart, $lte: windowEnd } },
+          orderExtra
+        ),
+      },
+      { $lookup: { from: "labcustomers", localField: "customerId", foreignField: "_id", as: "c" } },
+      { $unwind: { path: "$c", preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: "cities", localField: "c.cityId", foreignField: "_id", as: "city" } },
+      { $unwind: { path: "$city", preserveNullAndEmptyArrays: true } },
+      {
+        $group: {
+          _id: { cityId: "$city._id", name: "$city.name", nameAr: "$city.nameAr" },
+          kg: { $sum: { $ifNull: ["$actualNetWeightKg", "$totalWeightKg"] } },
+        },
+      },
+      { $sort: { kg: -1 } },
+    ]);
+
+    const totalKg = rows.reduce((sum, r) => sum + (r.kg as number), 0);
+    const top = rows.slice(0, 7);
+    const rest = rows.slice(7).reduce((sum, r) => sum + (r.kg as number), 0);
+
+    data.tonsByCity = {
+      totalKg,
+      slices: [
+        ...top.map((r) => ({
+          cityId: String(r._id.cityId ?? ""),
+          city: (r._id.name as string) ?? "",
+          cityAr: (r._id.nameAr as string) ?? "",
+          kg: r.kg as number,
+        })),
+        ...(rest > 0 ? [{ cityId: "__others", city: "Others", cityAr: "أخرى", kg: rest }] : []),
+      ],
+    };
+  }
+
   // ── I · Ready to weigh ───────────────────────────────────────────────────
   if (want("readyToWeigh")) {
     const filter = andFilters(visible, { status: "Pending", currentStageIndex: 8 });

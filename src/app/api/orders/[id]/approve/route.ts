@@ -58,6 +58,29 @@ export async function POST(
   const noteCheck = strictStr(body?.note, 2000, "Note");
   if (!noteCheck.ok) return badStrictStr(noteCheck);
 
+  /**
+   * At the Technical Manager's stage the one note box IS the Packing note.
+   *
+   * "ملاحظات قسم التعبئة" is printed on the MS-SC/F7 form and is his to write
+   * — he is the one who knows what the packing floor needs told. Routing it
+   * here rather than leaving it to a separate panel means it is written in
+   * the same action as the approval, so an order cannot move past his stage
+   * carrying a half-saved note, and nobody has to remember a second step.
+   *
+   * It goes to `packing` INSTEAD of the step note, not as well: one box must
+   * not write the same sentence into two fields that are printed in two
+   * different places on the same sheet.
+   */
+  const isPackingStage = slot.stage.key === "technical_manager_approval";
+  const extraSet = isPackingStage
+    ? {
+        "packing.note": noteCheck.value,
+        "packing.byId": userDoc._id,
+        "packing.byName": userDoc.name,
+        "packing.at": new Date(),
+      }
+    : undefined;
+
   const result = await claimAndAdvance(
     id,
     slot.stage,
@@ -66,7 +89,8 @@ export async function POST(
       actedAs: slot.actedAs,
       actedForRole: slot.actedForRole,
       actedForName: slot.actedForName,
-      note: noteCheck.value,
+      note: isPackingStage ? "" : noteCheck.value,
+      extraSet,
     }
   );
 

@@ -26,6 +26,26 @@ export interface ILabCustomerDoc extends Document {
   nameAr?: string;
   /** The office's own customer code, if they use one. */
   code?: string;
+  /**
+   * The commercial register's own number for this account ("C0000032").
+   *
+   * Distinct from `code`, which was a free field nobody filled: this one comes
+   * from the office's own ledger, is unique there, and is how staff refer to a
+   * customer on the phone. Unique among ACTIVE rows but optional, so a customer
+   * created in the app before the office issues a number is still valid.
+   */
+  customerNo?: string;
+  /** Which city this customer is in — a row in `City`, never a typed string,
+   *  because the reason it is recorded is to group reports by it. */
+  cityId?: mongoose.Types.ObjectId | null;
+  /** The sales rep's own number ("SM001"), beside the name below. The register
+   *  maps one number to exactly one name, verified across all 351 rows. */
+  salesRepNo?: string;
+  /** When the account was opened in the office's ledger. */
+  accountOpenedAt?: Date | null;
+  /** National ID / registration number. Present on about a quarter of the
+   *  register, so never assume it is there. */
+  idNumber?: string;
   phone?: string;
   contactName?: string;
   /** The sales rep (المندوب) who handles this customer — printed on every
@@ -47,6 +67,11 @@ const LabCustomerSchema = new Schema<ILabCustomerDoc>(
     nameKey:     { type: String, required: true },
     nameAr:      { type: String, default: "" },
     code:        { type: String, default: "", trim: true },
+    customerNo:  { type: String, default: "", trim: true },
+    cityId:      { type: Schema.Types.ObjectId, ref: "City", default: null },
+    salesRepNo:  { type: String, default: "", trim: true },
+    accountOpenedAt: { type: Date, default: null },
+    idNumber:    { type: String, default: "", trim: true },
     phone:       { type: String, default: "" },
     contactName: { type: String, default: "" },
     salesRepName: { type: String, default: "", trim: true },
@@ -66,6 +91,14 @@ LabCustomerSchema.index(
   { unique: true, partialFilterExpression: { isActive: true } }
 );
 LabCustomerSchema.index({ code: 1 });
+// `$gt: ""` excludes the empty default, so any number of customers may have no
+// number while the ones that do are still forced unique.
+LabCustomerSchema.index(
+  { customerNo: 1 },
+  { unique: true, partialFilterExpression: { isActive: true, customerNo: { $gt: "" } } }
+);
+// "every customer in this city" — the query the whole City collection exists for.
+LabCustomerSchema.index({ cityId: 1, name: 1 });
 
 export default mongoose.models.LabCustomer ||
   mongoose.model<ILabCustomerDoc>("LabCustomer", LabCustomerSchema);

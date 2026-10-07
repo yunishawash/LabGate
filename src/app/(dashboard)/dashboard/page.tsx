@@ -9,7 +9,7 @@ import {
   WaitingOnMe, MyOrders, ThisMonth, ThisMonthCompact,
   LabQueue, Quality, ReadyToWeigh, Coverage, StatsRow,
 } from "@/components/dashboard/blocks";
-import { VolumeTrend, QualityTrend, ProductMix } from "@/components/dashboard/charts";
+import { VolumeTrend, QualityTrend, ProductMix, OrdersByCity, TonsByCity } from "@/components/dashboard/charts";
 import { DashboardFilterBar, EMPTY_FILTERS, type DashboardFilters } from "@/components/dashboard/FilterBar";
 
 interface Payload {
@@ -27,7 +27,7 @@ const WIDE: BlockKey[] = ["thisMonth", "coverage"];
  * blocks, so the page reads top-to-bottom as "what needs me today" → "how is
  * the plant doing over time" rather than interleaving the two questions.
  */
-const ANALYTICS: BlockKey[] = ["volumeTrend", "qualityTrend", "productMix"];
+const ANALYTICS: BlockKey[] = ["volumeTrend", "qualityTrend", "productMix", "ordersByCity", "tonsByCity"];
 
 /**
  * `ROW1` is a row of one now: overdue orders moved into `StatsRow` above
@@ -89,6 +89,8 @@ export default function DashboardPage() {
       case "volumeTrend":  return <VolumeTrend data={d[key]} />;
       case "qualityTrend": return <QualityTrend data={d[key]} />;
       case "productMix":   return <ProductMix data={d[key]} />;
+      case "ordersByCity": return <OrdersByCity data={d[key]} />;
+      case "tonsByCity":   return <TonsByCity data={d[key]} />;
       default:             return null;
     }
   };
@@ -169,8 +171,25 @@ export default function DashboardPage() {
       )}
 
       {analytics.includes("volumeTrend") && <div>{render("volumeTrend")}</div>}
+      {/* The two city charts share a row — they answer the same question from
+          two sides (how many orders, how much tonnage), so reading them apart
+          would mean holding one in your head while looking at the other.
+          The bars take the wider half: sixteen city labels need the room,
+          where the donut is the same size at any width. */}
+      {(analytics.includes("ordersByCity") || analytics.includes("tonsByCity")) && (
+        <div className="grid gap-4 lg:grid-cols-5 items-stretch">
+          {analytics.includes("ordersByCity") && (
+            <div className="lg:col-span-3">{render("ordersByCity")}</div>
+          )}
+          {analytics.includes("tonsByCity") && (
+            <div className="lg:col-span-2">{render("tonsByCity")}</div>
+          )}
+        </div>
+      )}
       {(() => {
-        const rest = analytics.filter((b) => b !== "volumeTrend");
+        const rest = analytics.filter(
+          (b) => b !== "volumeTrend" && b !== "ordersByCity" && b !== "tonsByCity"
+        );
         return rest.length > 0 ? (
           <div className="grid gap-4 lg:grid-cols-2 items-stretch lg:[&>*:last-child:nth-child(odd)]:col-span-2">
             {rest.map((b) => <div key={b}>{render(b)}</div>)}

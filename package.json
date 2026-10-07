@@ -22,6 +22,7 @@
     "backfill:ar": "tsx src/scripts/backfill-arabic-names.ts",
     "backfill:line-weight": "tsx src/scripts/backfill-line-actual-weight.ts",
     "migrate:product-catalog": "tsx src/scripts/backfill-product-catalog.ts",
+    "import:register": "tsx src/scripts/import-register.ts",
     "check:order-routes": "tsx src/scripts/check-order-routes.ts",
     "seed:prod": "tsx src/scripts/seed-production.ts",
     "clear:demo": "tsx src/scripts/clear-demo-data.ts",

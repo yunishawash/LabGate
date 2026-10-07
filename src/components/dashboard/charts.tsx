@@ -1,11 +1,11 @@
 "use client";
 import {
-  ResponsiveContainer, ComposedChart, LineChart, PieChart, Pie, Cell,
+  ResponsiveContainer, ComposedChart, LineChart, BarChart, PieChart, Pie, Cell,
   Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine,
 } from "recharts";
 import { useLang } from "@/components/layout/AppShell";
 import { Card } from "@/components/dashboard/blocks";
-import { TrendingUp, LineChart as LineChartIcon, PieChart as PieChartIcon } from "lucide-react";
+import { TrendingUp, LineChart as LineChartIcon, PieChart as PieChartIcon, BarChart3 } from "lucide-react";
 
 /**
  * Colours for these three charts, copied from `globals.css` rather than read
@@ -254,6 +254,215 @@ export function ProductMix({
       <p className="text-xs text-slate-400 mt-3">
         {t("By tonnage shipped, posted orders only, last 12 months.", "بحسب الأطنان المشحونة، الطلبيات المرحّلة فقط، آخر 12 شهراً.")}
       </p>
+    </Card>
+  );
+}
+
+// ── N · Decided orders per city — approved vs rejected (stacked bars) ──────
+
+export interface CityOrdersRow {
+  cityId: string;
+  city: string;
+  cityAr: string;
+  approved: number;
+  rejected: number;
+}
+
+/**
+ * How each city's orders ended.
+ *
+ * STACKED rather than grouped, because the two segments sum to something real:
+ * approved + rejected is every order that city has an answer for. A stack is
+ * only honest when the parts make a whole, and here they do — orders still in
+ * the chain are excluded upstream, so "not approved" never silently means "not
+ * decided yet".
+ *
+ * Colours are the house pair, reused verbatim for the meanings they already
+ * carry elsewhere on this page: the posted blue and the rejection red. Checked
+ * rather than assumed — ΔE 26.9 for deuteranopia, 33.0 normal vision, both
+ * well past the 8 floor, so the two segments stay distinguishable without
+ * relying on the legend.
+ */
+export function OrdersByCity({ data }: { data: { rows: CityOrdersRow[] } }) {
+  const { lang, t } = useLang();
+
+  const rows = data.rows.filter((r) => r.approved + r.rejected > 0);
+  if (!rows.length) {
+    return (
+      <Card title={t("Orders by city", "الطلبيات حسب المدينة")} icon={<BarChart3 size={16} className="text-slate-500" />}>
+        <p className="text-sm text-slate-500">
+          {t("No decided orders in this period.", "لا توجد طلبيات محسومة في هذه الفترة.")}
+        </p>
+      </Card>
+    );
+  }
+
+  const named = rows.map((r) => ({
+    ...r,
+    // A customer with no city still has orders; they get their own bar rather
+    // than being dropped, so the bars still add up to the period's total.
+    name: (lang === "ar" && r.cityAr) || r.city || t("No city", "بلا مدينة"),
+    total: r.approved + r.rejected,
+  }));
+
+  const totals = named.reduce(
+    (a, r) => ({ approved: a.approved + r.approved, rejected: a.rejected + r.rejected }),
+    { approved: 0, rejected: 0 }
+  );
+
+  const LABEL = {
+    approved: t("Approved", "معتمدة"),
+    rejected: t("Rejected", "مرفوضة"),
+  };
+
+  return (
+    <Card title={t("Orders by city", "الطلبيات حسب المدينة")} icon={<BarChart3 size={16} className="text-slate-500" />}>
+      {/* The legend is a real element, not recharts' own: identity must never
+          rest on colour alone, and this one keeps its figures beside it. */}
+      <div className="flex items-center gap-4 mb-2 text-xs">
+        {(["approved", "rejected"] as const).map((k) => (
+          <span key={k} className="flex items-center gap-1.5 text-slate-500">
+            <span
+              className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
+              style={{ background: k === "approved" ? SEQ_3 : FAIL }}
+            />
+            {LABEL[k]}
+            <bdi className="tabular-nums text-slate-700 font-medium">{totals[k]}</bdi>
+          </span>
+        ))}
+      </div>
+
+      <div className="h-64">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={orient(named, lang)} margin={{ top: 4, right: 8, left: -18, bottom: 4 }}>
+            <CartesianGrid stroke={GRID} vertical={false} />
+            <XAxis
+              dataKey="name" tick={AXIS_TICK} tickLine={false} axisLine={false}
+              interval={0} angle={-35} textAnchor="end" height={64}
+            />
+            <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} allowDecimals={false} />
+            <Tooltip
+              cursor={{ fill: "#f8fafc" }}
+              formatter={(value, name) => [String(value), name as string]}
+              contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }}
+            />
+            {/* `stroke`/`strokeWidth` in the surface colour is the 2px gap
+                between the two segments — without it they read as one bar of
+                an ambiguous colour at small heights. */}
+            <Bar
+              dataKey="approved" stackId="orders" name={LABEL.approved}
+              fill={SEQ_3} stroke="#fff" strokeWidth={2} maxBarSize={34}
+            />
+            <Bar
+              dataKey="rejected" stackId="orders" name={LABEL.rejected}
+              fill={FAIL} stroke="#fff" strokeWidth={2} maxBarSize={34}
+              radius={[3, 3, 0, 0]}
+            />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      {/* Says what the last bar is, once. Without it a reader has to guess
+          whether "بلا مدينة" is a place. */}
+      {named.some((r) => !r.cityId) && (
+        <p className="text-xs text-slate-400 mt-1.5">
+          {t(
+            "\"No city\" is orders from customers with no city on file.",
+            "«بلا مدينة» هي طلبيات زبائن لم تُسجَّل مدينتهم."
+          )}
+        </p>
+      )}
+    </Card>
+  );
+}
+
+// ── O · Share of tonnage sold, per city (donut) ────────────────────────────
+
+export interface CityTonsSlice {
+  cityId: string;
+  city: string;
+  cityAr: string;
+  kg: number;
+}
+
+/**
+ * What share of the tonnage each city took.
+ *
+ * A donut, because the question is part-to-whole and the parts genuinely sum
+ * to one thing: every tonne posted in the window. Top seven cities plus an
+ * "Others" bucket — the categorical palette has seven hues, and an eighth
+ * series is never a generated colour.
+ *
+ * Every slice is DIRECTLY LABELLED in the list beside it, with its share and
+ * tonnage. That is not decoration: four of these seven hues sit below 3:1
+ * against the card surface, which the palette validator flags as requiring
+ * visible labels rather than colour alone. The list is that relief, and it is
+ * the same arrangement the product donut already uses.
+ */
+export function TonsByCity({
+  data,
+}: { data: { totalKg: number; slices: CityTonsSlice[] } }) {
+  const { lang, t } = useLang();
+
+  if (!data.slices.length) {
+    return (
+      <Card title={t("Tonnage by city", "الكميات حسب المدينة")} icon={<PieChartIcon size={16} className="text-slate-500" />}>
+        <p className="text-sm text-slate-500">
+          {t("No posted orders in this period.", "لا توجد طلبيات مرحّلة في هذه الفترة.")}
+        </p>
+      </Card>
+    );
+  }
+
+  const slices = data.slices.map((s, i) => ({
+    ...s,
+    name:
+      s.cityId === "__others"
+        ? t("Others", "أخرى")
+        : (lang === "ar" && s.cityAr) || s.city || t("No city", "بلا مدينة"),
+    pct: data.totalKg ? Math.round((s.kg / data.totalKg) * 1000) / 10 : 0,
+    // Grey is reserved for the miscellaneous bucket — it reads as "the rest"
+    // more universally than any hue would.
+    color: s.cityId === "__others" ? OTHERS_GREY : CATEGORICAL[i % CATEGORICAL.length],
+  }));
+
+  return (
+    <Card title={t("Tonnage by city", "الكميات حسب المدينة")} icon={<PieChartIcon size={16} className="text-slate-500" />}>
+      <div className="flex flex-col sm:flex-row items-center gap-4">
+        <div className="relative h-56 w-56 flex-shrink-0">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={slices} dataKey="kg" nameKey="name"
+                innerRadius={52} outerRadius={80} paddingAngle={1.5} strokeWidth={1} stroke="#fff"
+              >
+                {slices.map((s) => <Cell key={s.cityId || s.name} fill={s.color} />)}
+              </Pie>
+              <Tooltip
+                formatter={(value, name, item) => {
+                  const pct = (item?.payload as { pct?: number } | undefined)?.pct ?? 0;
+                  return [`${tons(Number(value))} ${t("t", "طن")} (${pct}%)`, name];
+                }}
+                contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+          {/* The centre of a donut is dead space — the total belongs there. */}
+          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+            <bdi className="text-lg font-semibold text-slate-900 tabular-nums">{tons(data.totalKg)}</bdi>
+            <span className="text-[11px] text-slate-400">{t("tons", "طن")}</span>
+          </div>
+        </div>
+
+        <ul className="flex-1 min-w-0 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
+          {slices.map((s) => (
+            <li key={s.cityId || s.name} className="flex items-center gap-2 text-xs min-w-0">
+              <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: s.color }} />
+              <bdi className="truncate text-slate-600" title={s.name}>{s.name}</bdi>
+              <bdi className="ms-auto tabular-nums text-slate-900 font-medium">{s.pct}%</bdi>
+            </li>
+          ))}
+        </ul>
+      </div>
     </Card>
   );
 }

@@ -4,6 +4,7 @@ import { requireRole } from "@/lib/requireSession";
 import { badRequest, badStrictStr, notFound, oid, readJson, strictStr } from "@/lib/apiHelpers";
 import { writeAudit } from "@/lib/audit";
 import SalesOrder from "@/models/SalesOrder";
+import { SALES_STAGES } from "@/lib/salesWorkflow";
 
 /**
  * Collections (التحصيلات) and Packing (التعبئة) notes printed on the MS-SC/F7
@@ -13,8 +14,15 @@ import SalesOrder from "@/models/SalesOrder";
  */
 const KIND_ROLES: Record<string, string[]> = {
   collections: ["accountant", "finance_manager"],
-  packing: ["weighbridge"],
+  // The Technical Manager writes the Packing note, at his own stage — see the
+  // stage guard below. It used to belong to the weighbridge, which wrote it
+  // at stage 8, three stages after the sheet it prints on had been signed.
+  packing: ["technical_manager"],
 };
+
+/** The stage at which the Packing note may be written, from the stage table
+ *  rather than a hard-coded 5 — so a reshuffle moves this with it. */
+const PACKING_STAGE = SALES_STAGES.find((s) => s.key === "technical_manager_approval")!;
 
 export async function POST(
   req: NextRequest,
@@ -38,8 +46,25 @@ export async function POST(
   const noteCheck = strictStr(body?.note, 2000, "Note");
   if (!noteCheck.ok) return badStrictStr(noteCheck);
 
-  const order = await SalesOrder.findById(orderId).select("orderNumber steps").lean();
+  const order = await SalesOrder.findById(orderId)
+    .select("orderNumber steps status currentStageIndex").lean();
   if (!order) return notFound("Order not found");
+
+  /**
+   * The Packing note is written WHILE the order sits with the Technical
+   * Manager, and only then — before that nobody has looked at it, and after
+   * that his signature is already on the sheet the note prints on. Admin is
+   * held to the same window: the point is when it may be written, not who is
+   * trusted.
+   */
+  if (kind === "packing") {
+    const o = order as unknown as { status: string; currentStageIndex: number };
+    if (o.status !== "Pending" || o.currentStageIndex !== PACKING_STAGE.index) {
+      return badRequest(
+        `The Packing note is written while the order is with the ${PACKING_STAGE.en} (stage ${PACKING_STAGE.index}).`
+      );
+    }
+  }
 
   // The Collections note IS the thing the Finance Manager approved — letting
   // it change afterward would mean his signature no longer matches what it

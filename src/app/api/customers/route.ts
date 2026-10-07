@@ -2,10 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongoose";
 import { requireRole, requireSession } from "@/lib/requireSession";
 import {
+  oid,
   badRequest, badStrictStr, conflict, containsRegex, readJson, str, strictStr,
   normalizeName, isDuplicateKeyError, paging,
 } from "@/lib/apiHelpers";
 import LabCustomer from "@/models/LabCustomer";
+import City from "@/models/City";
 import LabSample from "@/models/LabSample";
 
 export async function GET(req: NextRequest) {
@@ -23,7 +25,9 @@ export async function GET(req: NextRequest) {
   const search = searchParams.get("search");
   if (search) {
     const rx = containsRegex(search);
-    filter.$or = [{ name: rx }, { code: rx }, { nameAr: rx }];
+    // The register's own number is how staff refer to a customer on the
+    // phone, so it has to be searchable alongside the name.
+    filter.$or = [{ name: rx }, { code: rx }, { nameAr: rx }, { customerNo: rx }];
   }
 
   /**
@@ -37,7 +41,10 @@ export async function GET(req: NextRequest) {
    */
   const { page, limit, skip } = paging(searchParams, 25, 1000);
   const [customers, total] = await Promise.all([
-    LabCustomer.find(filter).sort({ name: 1 }).skip(skip).limit(limit).lean(),
+    // The city comes back joined, so every screen can show and group by it
+    // without a second round trip per row.
+    LabCustomer.find(filter).sort({ name: 1 }).skip(skip).limit(limit)
+      .populate({ path: "cityId", select: "name nameAr" }).lean(),
     LabCustomer.countDocuments(filter),
   ]);
 
@@ -111,6 +118,25 @@ export async function POST(req: NextRequest) {
 
   const nameKey = normalizeName(name);
 
+  /**
+   * A city is chosen from the list, never typed — that is the whole reason it
+   * is its own collection. An id that names no live city is refused rather
+   * than stored as a dangling reference the reports would silently drop.
+   */
+  let cityId: ReturnType<typeof oid> = null;
+  if (body.cityId) {
+    cityId = oid(body.cityId);
+    if (!cityId) return badRequest("Invalid cityId");
+    if (!(await City.exists({ _id: cityId, isActive: true }))) return badRequest("Unknown city");
+  }
+
+  let accountOpenedAt: Date | null = null;
+  if (body.accountOpenedAt) {
+    const d = new Date(str(body.accountOpenedAt, 40));
+    if (Number.isNaN(d.getTime())) return badRequest("Invalid accountOpenedAt");
+    accountOpenedAt = d;
+  }
+
   // Friendly check first, so the user gets the existing name back...
   const existing = await LabCustomer.findOne({ nameKey, isActive: true }).lean();
   if (existing) return conflict(`"${(existing as { name: string }).name}" already exists`);
@@ -121,6 +147,11 @@ export async function POST(req: NextRequest) {
       nameKey,
       nameAr: str(body.nameAr, 200),
       code: str(body.code, 40),
+      customerNo: str(body.customerNo, 40),
+      cityId,
+      salesRepNo: str(body.salesRepNo, 40),
+      accountOpenedAt,
+      idNumber: str(body.idNumber, 60),
       phone: str(body.phone, 40),
       contactName: str(body.contactName, 120),
       salesRepName: str(body.salesRepName, 120),
@@ -131,7 +162,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(created, { status: 201 });
   } catch (err) {
     // ...and the partial unique index catches the race the check cannot.
-    if (isDuplicateKeyError(err)) return conflict(`"${name}" already exists`);
+    if (isDuplicateKeyError(err)) {
+      // Two unique indexes can refuse this now; name the one that did.
+      const no = str(body.customerNo, 40);
+      return conflict(
+        no && String((err as Error).message).includes("customerNo")
+          ? `Customer number "${no}" is already in use`
+          : `"${name}" already exists`
+      );
+    }
     throw err;
   }
 }
