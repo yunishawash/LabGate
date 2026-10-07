@@ -414,7 +414,15 @@ function Delta({
   const pct = before === 0 ? null : Math.round((diff / before) * 100);
 
   return (
-    <span className={`text-xs inline-flex items-center gap-0.5 ${tone}`} title={t("vs last month", "مقارنة بالشهر الماضي")}>
+    <span
+      className={`text-xs inline-flex items-center gap-0.5 ${tone}`}
+      // "نفس عدد الأيام", not "الشهر الماضي" — the comparison is against the
+      // SAME NUMBER of elapsed days last month, never the whole of it. Saying
+      // so on the number itself is what stops "-74%" reading as a verdict
+      // instead of a pace: 7 days in vs 7 days last month is a fair fight,
+      // 7 days vs all 30 of them is not.
+      title={t("vs the same number of days last month", "مقارنة بنفس عدد الأيام من الشهر الماضي")}
+    >
       <Icon size={12} />
       <bdi>{pct === null ? t("new", "جديد") : `${Math.abs(pct)}%`}</bdi>
     </span>
@@ -453,6 +461,16 @@ export function ThisMonth({ data }: { data: { current: Period; previous: Period 
           <bdi className="tabular-nums text-red-700">{(c.rejectedKg / 1000).toFixed(1)}</bdi>
         </p>
       )}
+      {/* The one line that makes the percentages legible without a hover:
+          month-to-date vs the SAME number of days last month, never the
+          whole of it — otherwise day 7 of a 30-day month reads as "-74%"
+          and gets mistaken for a verdict instead of a pace. */}
+      <p className="text-xs text-slate-400 mt-3">
+        {t(
+          "Percentages compare the same number of elapsed days last month, not the full month.",
+          "النسب مقارنة بنفس عدد الأيام المنقضية من الشهر الماضي، لا الشهر كاملاً."
+        )}
+      </p>
     </Card>
   );
 }
@@ -488,6 +506,14 @@ export function ThisMonthCompact({ data }: { data: { current: Period; previous: 
           </div>
         ))}
       </div>
+      {/* Shorter than ThisMonth's own wording — this card sits in a narrow
+          column, and the full sentence wraps to three lines there. */}
+      <p className="text-xs text-slate-400 mt-2">
+        {t(
+          "vs. the same number of days last month",
+          "مقارنة بنفس عدد الأيام من الشهر الماضي"
+        )}
+      </p>
     </Card>
   );
 }

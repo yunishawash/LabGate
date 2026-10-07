@@ -51,6 +51,19 @@ export async function GET(req: NextRequest) {
   const customerId = oid(searchParams.get("customerId") || "");
   const productId = oid(searchParams.get("productId") || "");
   const dated = (field: string) => (range ? { [field]: range } : {});
+  /**
+   * What a tonne SHIPPED is, as one expression.
+   *
+   * The weighbridge reading for this line, falling back to the ordered weight
+   * for lines posted before weighing was recorded per line. Both the product
+   * donut and the city donut sum THIS, over the same unwound lines, so their
+   * totals are equal by construction rather than by two aggregations
+   * happening to agree — which they did not: the product donut summed the
+   * ordered weight while calling itself "tonnage shipped", and the two cards
+   * showed 2346.9 t and 2352.0 t side by side.
+   */
+  const SHIPPED_KG = { $ifNull: ["$lines.actualWeightKg", "$lines.lineWeightKg"] };
+
   const orderExtra: Record<string, unknown> = {};
   if (customerId) orderExtra.customerId = customerId;
   if (productId) orderExtra["lines.productId"] = productId;
@@ -127,6 +140,26 @@ export async function GET(req: NextRequest) {
     const startThis = new Date(now.getFullYear(), now.getMonth(), 1);
     const startLast = new Date(now.getFullYear(), now.getMonth() - 1, 1);
 
+    /**
+     * "Previous" is the SAME NUMBER OF ELAPSED DAYS into last month, not all
+     * of it — a month-to-date vs month-to-date comparison, not partial vs
+     * complete.
+     *
+     * The earlier version compared `current` (1st of this month → now, which
+     * grows every day) against ALL of last month. Early in a month that is 7
+     * days of activity measured against ~30 — a reader sees "-74%" and reads
+     * it as "we're behind", when it is really just "a week has passed and a
+     * month hasn't". The percentage was never answering "better or worse",
+     * only "how far through the month are we" — which the calendar already
+     * shows.
+     *
+     * Capped at `startThis`: if last month had FEWER days than have elapsed
+     * this month (comparing May 31st against April's 30 days), the window
+     * stops at April's own end rather than spilling into May.
+     */
+    const elapsedMs = now.getTime() - startThis.getTime();
+    const endLast = new Date(Math.min(startLast.getTime() + elapsedMs, startThis.getTime()));
+
     const period = async (from: Date, to: Date) => {
       const [posted, rejected] = await Promise.all([
         SalesOrder.aggregate([
@@ -158,7 +191,7 @@ export async function GET(req: NextRequest) {
 
     data.thisMonth = {
       current: await period(startThis, now),
-      previous: await period(startLast, startThis),
+      previous: await period(startLast, endLast),
     };
   }
 
@@ -230,66 +263,11 @@ export async function GET(req: NextRequest) {
     return slots;
   }
 
-  // ── K · Volume trend — tonnage bars + rejection-rate line, by month ──────
-  if (want("volumeTrend")) {
-    const [tonnageRows, outcomeRows] = await Promise.all([
-      SalesOrder.aggregate([
-        {
-          $match: andFilters(
-            visible,
-            { status: "Posted", postedAt: { $gte: windowStart, $lte: windowEnd } },
-            orderExtra
-          ),
-        },
-        {
-          $group: {
-            _id: { y: { $year: "$postedAt" }, m: { $month: "$postedAt" } },
-            kg: { $sum: { $ifNull: ["$actualNetWeightKg", "$totalWeightKg"] } },
-            orders: { $sum: 1 },
-          },
-        },
-      ]),
-      // Rate is a COHORT measure — of the orders raised in month M that have
-      // since resolved, what share died? Orders still open don't count on
-      // either side yet; counting them as "not rejected" would understate a
-      // month that simply hasn't finished playing out.
-      SalesOrder.aggregate([
-        {
-          $match: andFilters(
-            visible,
-            { status: { $in: ["Posted", "Rejected"] }, createdAt: { $gte: windowStart, $lte: windowEnd } },
-            orderExtra
-          ),
-        },
-        {
-          $group: {
-            _id: { y: { $year: "$createdAt" }, m: { $month: "$createdAt" }, status: "$status" },
-            n: { $sum: 1 },
-          },
-        },
-      ]),
-    ]);
+  // volumeTrend removed 2026-10-07 (client request) — see the ROW1 comment
+  // in the dashboard page for why: a dual-axis chart over data with no
+  // meaningful correlation (r=0.24). Per-stage/reason rejection breakdown
+  // moved to the Rejections report instead.
 
-    const tonnageByKey = new Map(tonnageRows.map((r) => [`${r._id.y}-${r._id.m}`, r]));
-    const outcomeByKey = new Map<string, { posted: number; rejected: number }>();
-    for (const r of outcomeRows) {
-      const key = `${r._id.y}-${r._id.m}`;
-      const cur = outcomeByKey.get(key) ?? { posted: 0, rejected: 0 };
-      if (r._id.status === "Posted") cur.posted += r.n; else cur.rejected += r.n;
-      outcomeByKey.set(key, cur);
-    }
-
-    data.volumeTrend = monthSlots().map(({ year, month }) => {
-      const key = `${year}-${month + 1}`; // Mongo's $month is 1-based
-      const t = tonnageByKey.get(key);
-      const o = outcomeByKey.get(key);
-      const resolved = (o?.posted ?? 0) + (o?.rejected ?? 0);
-      return {
-        year, month, kg: t?.kg ?? 0, orders: t?.orders ?? 0,
-        rejectionRatePct: resolved ? Math.round(((o!.rejected / resolved) * 1000)) / 10 : null,
-      };
-    });
-  }
 
   // ── L · Quality trend — in-spec % by month ────────────────────────────────
   if (want("qualityTrend")) {
@@ -338,7 +316,7 @@ export async function GET(req: NextRequest) {
       {
         $group: {
           _id: { productId: "$lines.productId", product: "$lines.product", productAr: "$lines.productAr" },
-          kg: { $sum: "$lines.lineWeightKg" },
+          kg: { $sum: SHIPPED_KG },
         },
       },
       { $sort: { kg: -1 } },
@@ -441,14 +419,17 @@ export async function GET(req: NextRequest) {
           orderExtra
         ),
       },
+      // Joined BEFORE the unwind: the city belongs to the order, so looking it
+      // up once per order beats once per line.
       { $lookup: { from: "labcustomers", localField: "customerId", foreignField: "_id", as: "c" } },
       { $unwind: { path: "$c", preserveNullAndEmptyArrays: true } },
       { $lookup: { from: "cities", localField: "c.cityId", foreignField: "_id", as: "city" } },
       { $unwind: { path: "$city", preserveNullAndEmptyArrays: true } },
+      { $unwind: "$lines" },
       {
         $group: {
           _id: { cityId: "$city._id", name: "$city.name", nameAr: "$city.nameAr" },
-          kg: { $sum: { $ifNull: ["$actualNetWeightKg", "$totalWeightKg"] } },
+          kg: { $sum: SHIPPED_KG },
         },
       },
       { $sort: { kg: -1 } },

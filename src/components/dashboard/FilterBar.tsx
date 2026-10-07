@@ -2,9 +2,8 @@
 import { useEffect, useState } from "react";
 import { Filter, X } from "lucide-react";
 import { useLang } from "@/components/layout/AppShell";
-import { Input } from "@/components/ui/input";
 import { Combobox } from "@/components/ui/combobox";
-import { toDateInputValue } from "@/lib/utils";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { productPickerOptions } from "@/types";
 import type { ILabCustomer, ILabProduct } from "@/types";
 
@@ -52,21 +51,10 @@ export function DashboardFilterBar({
         {t("Filter", "تصفية")}
       </span>
 
-      <div className="flex items-center gap-1.5">
-        <Input
-          type="date" value={value.from} max={value.to || toDateInputValue(new Date())}
-          onChange={(e) => set({ from: e.target.value })}
-          className="h-9 w-36"
-          title={t("From", "من")}
-        />
-        <span className="text-slate-300 text-sm">–</span>
-        <Input
-          type="date" value={value.to} min={value.from || undefined} max={toDateInputValue(new Date())}
-          onChange={(e) => set({ to: e.target.value })}
-          className="h-9 w-36"
-          title={t("To", "إلى")}
-        />
-      </div>
+      {/* Same calendar-grid range picker the Reports page uses, not two bare
+          date inputs — one control for "from–to", consistent across the two
+          places in the app that filter by a date range. */}
+      <DateRangePicker from={value.from} to={value.to} onChange={(from, to) => set({ from, to })} />
 
       <Combobox
         triggerClassName={SELECT_CLASS + " w-44"}

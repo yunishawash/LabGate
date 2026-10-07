@@ -9,7 +9,7 @@ import {
   WaitingOnMe, MyOrders, ThisMonth, ThisMonthCompact,
   LabQueue, Quality, ReadyToWeigh, Coverage, StatsRow,
 } from "@/components/dashboard/blocks";
-import { VolumeTrend, QualityTrend, ProductMix, OrdersByCity, TonsByCity } from "@/components/dashboard/charts";
+import { QualityTrend, ProductMix, OrdersByCity, TonsByCity } from "@/components/dashboard/charts";
 import { DashboardFilterBar, EMPTY_FILTERS, type DashboardFilters } from "@/components/dashboard/FilterBar";
 
 interface Payload {
@@ -27,17 +27,31 @@ const WIDE: BlockKey[] = ["thisMonth", "coverage"];
  * blocks, so the page reads top-to-bottom as "what needs me today" → "how is
  * the plant doing over time" rather than interleaving the two questions.
  */
-const ANALYTICS: BlockKey[] = ["volumeTrend", "qualityTrend", "productMix", "ordersByCity", "tonsByCity"];
+const ANALYTICS: BlockKey[] = ["qualityTrend", "productMix", "ordersByCity", "tonsByCity"];
 
 /**
- * `ROW1` is a row of one now: overdue orders moved into `StatsRow` above
- * (with its own click-through to the list), and the whole-chain pipeline
- * board was dropped outright rather than relocated — neither is computed by
- * the API for any role any more. Volume & rejection rate keeps the same slot
- * they used to share, just without the two cards that used to flank it.
+ * `ROW1` = the orders-by-city bars beside this month's compact numbers.
+ *
+ * "Volume & rejection rate" used to hold this slot alone. It was removed
+ * outright (2026-10-07, client request), not relocated: it was a dual-Y-axis
+ * combo chart (tons on one scale, rejection % on an independently-chosen
+ * second scale), which is the textbook chart mistake — the alignment between
+ * two arbitrary scales invents a visual relationship that may not be in the
+ * data. A later rebuild split it into two single-axis charts sharing one time
+ * axis, which was honest but still answered a question the data itself does
+ * not support: Pearson r between monthly tons and rejection rate came out to
+ * 0.24 across a full year of orders — no meaningful linear relationship.
+ * Neither chart form nor cohort-alignment was the actual problem; there
+ * simply isn't a volume/rejection story to tell here. Per-stage and
+ * per-reason "where do we lose orders" is a real, data-rich question — see
+ * the Rejections report on the Reports page, not the dashboard.
+ *
+ * `ROW2` = quality trend, product mix and tonnage-by-city, three-up: the
+ * plant-wide "how are we doing" charts on one line, in the order a reader
+ * would ask them — are we in spec, what are we shipping, where does it go.
  */
-const ROW1: BlockKey[] = ["volumeTrend"];
-const ROW2: BlockKey[] = ["qualityTrend", "productMix", "thisMonth"];
+const ROW1: BlockKey[] = ["ordersByCity", "thisMonth"];
+const ROW2: BlockKey[] = ["qualityTrend", "productMix", "tonsByCity"];
 
 export default function DashboardPage() {
   const { data: session } = useSession();
@@ -86,11 +100,11 @@ export default function DashboardPage() {
       case "quality":      return <Quality data={d[key]} />;
       case "readyToWeigh": return <ReadyToWeigh data={d[key]} />;
       case "coverage":     return <Coverage data={d[key]} />;
-      case "volumeTrend":  return <VolumeTrend data={d[key]} />;
       case "qualityTrend": return <QualityTrend data={d[key]} />;
       case "productMix":   return <ProductMix data={d[key]} />;
       case "ordersByCity": return <OrdersByCity data={d[key]} />;
       case "tonsByCity":   return <TonsByCity data={d[key]} />;
+      // "volumeTrend" deliberately has no case — see the ROW1 comment above.
       default:             return null;
     }
   };
@@ -146,18 +160,28 @@ export default function DashboardPage() {
           DashboardFilterBar. */}
       {(hasRow1 || hasRow2) && <DashboardFilterBar value={filters} onChange={setFilters} />}
 
-      {/* Volume & rejection rate, full width. */}
-      {hasRow1 && <div>{render("volumeTrend")}</div>}
-
-      {/* Fixed three-up: quality and product-mix charts at 40% each, this
-          month's numbers stacked in the remaining 20%. */}
-      {hasRow2 && (
-        <div className="grid gap-4 lg:grid-cols-5 items-stretch">
-          <div className="lg:col-span-2">{render("qualityTrend")}</div>
-          <div className="lg:col-span-2">{render("productMix")}</div>
+      {/* Orders by city, beside this month's compact numbers. The bars get
+          three quarters of the row — sixteen city labels, rotated, need the
+          width — and the stats column keeps the same compact shape it had in
+          the old three-up row. */}
+      {hasRow1 && (
+        <div className="grid gap-4 lg:grid-cols-4 items-stretch">
+          <div className="lg:col-span-3">{render("ordersByCity")}</div>
           <div>
             <ThisMonthCompact data={(payload!.data as Record<string, never>).thisMonth} />
           </div>
+        </div>
+      )}
+
+      {/* Quality trend, product mix and tonnage-by-city, evenly split — all
+          three are the same shape of question (a trend line, two donuts),
+          so an even three-way split reads as one family of chart rather than
+          favouring one of them. */}
+      {hasRow2 && (
+        <div className="grid gap-4 lg:grid-cols-3 items-stretch">
+          <div>{render("qualityTrend")}</div>
+          <div>{render("productMix")}</div>
+          <div>{render("tonsByCity")}</div>
         </div>
       )}
 
@@ -170,32 +194,14 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {analytics.includes("volumeTrend") && <div>{render("volumeTrend")}</div>}
-      {/* The two city charts share a row — they answer the same question from
-          two sides (how many orders, how much tonnage), so reading them apart
-          would mean holding one in your head while looking at the other.
-          The bars take the wider half: sixteen city labels need the room,
-          where the donut is the same size at any width. */}
-      {(analytics.includes("ordersByCity") || analytics.includes("tonsByCity")) && (
-        <div className="grid gap-4 lg:grid-cols-5 items-stretch">
-          {analytics.includes("ordersByCity") && (
-            <div className="lg:col-span-3">{render("ordersByCity")}</div>
-          )}
-          {analytics.includes("tonsByCity") && (
-            <div className="lg:col-span-2">{render("tonsByCity")}</div>
-          )}
+      {/* Whatever ROW1/ROW2 didn't consume for THIS role (e.g. a role that
+          has tonsByCity but not qualityTrend/productMix) still gets its
+          chart, just without the fixed layout a full row assumes. */}
+      {analytics.length > 0 && (
+        <div className="grid gap-4 lg:grid-cols-2 items-stretch lg:[&>*:last-child:nth-child(odd)]:col-span-2">
+          {analytics.map((b) => <div key={b}>{render(b)}</div>)}
         </div>
       )}
-      {(() => {
-        const rest = analytics.filter(
-          (b) => b !== "volumeTrend" && b !== "ordersByCity" && b !== "tonsByCity"
-        );
-        return rest.length > 0 ? (
-          <div className="grid gap-4 lg:grid-cols-2 items-stretch lg:[&>*:last-child:nth-child(odd)]:col-span-2">
-            {rest.map((b) => <div key={b}>{render(b)}</div>)}
-          </div>
-        ) : null;
-      })()}
 
       {wide.map((b) => <div key={b}>{render(b)}</div>)}
     </div>

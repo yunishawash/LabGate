@@ -1,11 +1,11 @@
 "use client";
 import {
-  ResponsiveContainer, ComposedChart, LineChart, BarChart, PieChart, Pie, Cell,
+  ResponsiveContainer, LineChart, BarChart, PieChart, Pie, Cell,
   Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine,
 } from "recharts";
 import { useLang } from "@/components/layout/AppShell";
 import { Card } from "@/components/dashboard/blocks";
-import { TrendingUp, LineChart as LineChartIcon, PieChart as PieChartIcon, BarChart3 } from "lucide-react";
+import { LineChart as LineChartIcon, PieChart as PieChartIcon, BarChart3 } from "lucide-react";
 
 /**
  * Colours for these three charts, copied from `globals.css` rather than read
@@ -55,67 +55,10 @@ function orient<T>(data: T[], lang: "en" | "ar"): T[] {
 
 const tons = (kg: number) => Math.round((kg / 1000) * 10) / 10;
 
-// ── K · Volume trend — tonnage bars + rejection-rate line ──────────────────
-export function VolumeTrend({
-  data,
-}: { data: { year: number; month: number; kg: number; orders: number; rejectionRatePct: number | null }[] }) {
-  const { lang, t } = useLang();
-  const chartData = orient(
-    data.map((d) => ({ ...d, label: monthLabel(d.year, d.month, lang), tons: tons(d.kg) })),
-    lang
-  );
-  const hasAny = data.some((d) => d.orders > 0);
-
-  return (
-    <Card
-      title={t("Volume & rejection rate", "الحجم ونسبة الرفض")}
-      icon={<TrendingUp size={16} className="text-slate-500" />}
-    >
-      {!hasAny ? (
-        <p className="text-sm text-slate-500">{t("No posted orders in the last 12 months.", "لا توجد طلبيات مرحّلة خلال آخر 12 شهراً.")}</p>
-      ) : (
-        <>
-          <div className="h-64" dir="ltr">
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-                <CartesianGrid stroke={GRID} vertical={false} />
-                <XAxis dataKey="label" tick={AXIS_TICK} axisLine={{ stroke: "#e2e8f0" }} tickLine={false} />
-                <YAxis
-                  yAxisId="tons" tick={AXIS_TICK} axisLine={false} tickLine={false} width={38}
-                  label={{ value: t("t", "طن"), position: "insideTopLeft", fontSize: 11, fill: "#94a3b8" }}
-                />
-                <YAxis
-                  yAxisId="rate" orientation="right" tick={AXIS_TICK} axisLine={false} tickLine={false} width={34}
-                  domain={[0, (max: number) => Math.max(20, Math.ceil(max / 10) * 10)]}
-                  label={{ value: "%", position: "insideTopRight", fontSize: 11, fill: "#94a3b8" }}
-                />
-                <Tooltip
-                  formatter={(value, name) =>
-                    name === "tons"
-                      ? [`${value} ${t("t", "طن")}`, t("Posted", "مرحّلة")]
-                      : [`${value}%`, t("Rejection rate", "نسبة الرفض")]
-                  }
-                  contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }}
-                />
-                <Bar yAxisId="tons" dataKey="tons" name="tons" fill={SEQ_3} radius={[3, 3, 0, 0]} maxBarSize={28} />
-                <Line
-                  yAxisId="rate" dataKey="rejectionRatePct" name="rate" type="monotone"
-                  stroke={FAIL} strokeWidth={2} dot={{ r: 3, fill: FAIL }} connectNulls
-                />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-          <p className="text-xs text-slate-400 mt-1">
-            {t(
-              "Bars = tons posted per month. Line = share of that month's orders that were ultimately rejected.",
-              "الأعمدة = الأطنان المرحّلة كل شهر. الخط = نسبة طلبيات ذلك الشهر التي رُفضت في النهاية."
-            )}
-          </p>
-        </>
-      )}
-    </Card>
-  );
-}
+// K — Volume & rejection rate removed 2026-10-07 (client request): it was a
+// dual-Y-axis combo chart over data with no meaningful correlation
+// (Pearson r = 0.24). See the Rejections report for the real
+// "where do we lose orders" answer instead.
 
 // ── L · Quality trend — in-spec % by month, against a target line ──────────
 export function QualityTrend({

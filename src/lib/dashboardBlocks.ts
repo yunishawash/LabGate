@@ -17,7 +17,8 @@ export type BlockKey =
   | "quality"         // H
   | "readyToWeigh"    // I
   | "coverage"        // J — delegations & absence
-  | "volumeTrend"     // K — tonnage by month, rejection rate overlaid (bar + line)
+  // K — "Volume & rejection rate" was removed outright 2026-10-07 (client
+  // request), not relocated — see the ROW1 comment in dashboard/page.tsx.
   | "qualityTrend"    // L — in-spec % by month (line)
   | "productMix"      // M — tonnage share by product, last 12 months (donut)
   | "ordersByCity"    // N — decided orders per city, approved vs rejected (stacked bars)
@@ -29,21 +30,21 @@ export const ROLE_BLOCKS: Record<string, BlockKey[]> = {
   finance_manager:   ["waitingOnMe", "thisMonth", "coverage"],
   accountant:        ["waitingOnMe", "coverage"],
   // "rejections" ("Where orders die") was dropped from the dashboard on the
-  // client's request, then removed outright along with the standalone
-  // Rejections page it linked to. The full breakdown, with the rejection
-  // rate per stage, still lives on the Rejections report (Reports →
-  // Rejections), where it's read weekly.
+  // client's request, and the standalone Rejections page it linked to was
+  // removed along with it. The per-stage breakdown now lives on the
+  // Rejections report (Reports → Rejections) instead — see that report for
+  // the reasoning; it answers the same question the dashboard used to.
   //
   // K/L/M are the year-long trend charts — the daily "what's waiting"
   // blocks above them answer today's question, these answer "is the plant
   // doing better or worse than it was". GM/admin only: they're the roles
   // whose visibility spans every order, so a monthly total means what it
   // says rather than being a fragment of one.
-  general_manager:   ["stuck", "waitingOnMe", "thisMonth", "quality", "volumeTrend", "qualityTrend", "productMix", "ordersByCity", "tonsByCity", "coverage"],
+  general_manager:   ["stuck", "waitingOnMe", "thisMonth", "quality", "qualityTrend", "productMix", "ordersByCity", "tonsByCity", "coverage"],
   technical_manager: ["waitingOnMe", "labQueue", "quality", "qualityTrend", "coverage"],
   lab_technician:    ["labQueue", "quality", "coverage"],
   weighbridge:       ["readyToWeigh", "coverage"],
-  admin:             ["stuck", "thisMonth", "volumeTrend", "qualityTrend", "productMix", "ordersByCity", "tonsByCity", "coverage"],
+  admin:             ["stuck", "thisMonth", "qualityTrend", "productMix", "ordersByCity", "tonsByCity", "coverage"],
 };
 
 /** A role outside the chain still gets a page, not a crash. */
