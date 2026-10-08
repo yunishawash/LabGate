@@ -36,6 +36,10 @@ export default function LabPage() {
   const router = useRouter();
   const role = session?.user?.role ?? "";
   const canRecord = role === "admin" || role === "lab_technician" || role === "technical_manager";
+  // Recording a NEW sample is the lab technician's job, and his alone
+  // (client request, 2026-10-08) — `canRecord` above still covers editing
+  // one and the Products & Specs tab, both unchanged.
+  const canAddSample = role === "lab_technician";
 
   const [tab, setTab] = useState<Tab>("results");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -277,7 +281,7 @@ export default function LabPage() {
               <Download size={14} />
               {t("Export", "تصدير")}
             </Button>
-            {canRecord && (
+            {canAddSample && (
               <Button className="gap-2" onClick={() => { setEditing(null); setDialogOpen(true); }}>
                 <Plus size={16} />
                 {t("New sample", "عيّنة جديدة")}

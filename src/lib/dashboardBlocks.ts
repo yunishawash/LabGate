@@ -21,12 +21,13 @@ export type BlockKey =
   // request), not relocated — see the ROW1 comment in dashboard/page.tsx.
   | "qualityTrend"    // L — in-spec % by month (line)
   | "productMix"      // M — tonnage share by product, last 12 months (donut)
-  | "ordersByCity"    // N — decided orders per city, approved vs rejected (stacked bars)
-  | "tonsByCity";     // O — share of tonnage sold per city (donut), beside N
+  | "ordersByCity"    // N — posted orders per city, count + tonnage (bars)
+  | "ordersByMonth"   // N2 — tonnage posted per month (bars), beside N
+  | "tonsByCity";     // O — share of tonnage sold per city (donut)
 
 export const ROLE_BLOCKS: Record<string, BlockKey[]> = {
   sales_coordinator: ["myOrders", "waitingOnMe", "coverage"],
-  sales_manager:     ["waitingOnMe", "thisMonth", "myOrders", "ordersByCity", "tonsByCity", "coverage"],
+  sales_manager:     ["waitingOnMe", "thisMonth", "myOrders", "ordersByCity", "ordersByMonth", "tonsByCity", "coverage"],
   finance_manager:   ["waitingOnMe", "thisMonth", "coverage"],
   accountant:        ["waitingOnMe", "coverage"],
   // "rejections" ("Where orders die") was dropped from the dashboard on the
@@ -40,11 +41,11 @@ export const ROLE_BLOCKS: Record<string, BlockKey[]> = {
   // doing better or worse than it was". GM/admin only: they're the roles
   // whose visibility spans every order, so a monthly total means what it
   // says rather than being a fragment of one.
-  general_manager:   ["stuck", "waitingOnMe", "thisMonth", "quality", "qualityTrend", "productMix", "ordersByCity", "tonsByCity", "coverage"],
+  general_manager:   ["stuck", "waitingOnMe", "thisMonth", "quality", "qualityTrend", "productMix", "ordersByCity", "ordersByMonth", "tonsByCity", "coverage"],
   technical_manager: ["waitingOnMe", "labQueue", "quality", "qualityTrend", "coverage"],
   lab_technician:    ["labQueue", "quality", "coverage"],
   weighbridge:       ["readyToWeigh", "coverage"],
-  admin:             ["stuck", "thisMonth", "qualityTrend", "productMix", "ordersByCity", "tonsByCity", "coverage"],
+  admin:             ["stuck", "thisMonth", "qualityTrend", "productMix", "ordersByCity", "ordersByMonth", "tonsByCity", "coverage"],
 };
 
 /** A role outside the chain still gets a page, not a crash. */

@@ -9,7 +9,7 @@ import {
   WaitingOnMe, MyOrders, ThisMonth, ThisMonthCompact,
   LabQueue, Quality, ReadyToWeigh, Coverage, StatsRow,
 } from "@/components/dashboard/blocks";
-import { QualityTrend, ProductMix, OrdersByCity, TonsByCity } from "@/components/dashboard/charts";
+import { QualityTrend, ProductMix, OrdersByCity, OrdersByMonth, TonsByCity } from "@/components/dashboard/charts";
 import { DashboardFilterBar, EMPTY_FILTERS, type DashboardFilters } from "@/components/dashboard/FilterBar";
 
 interface Payload {
@@ -27,10 +27,11 @@ const WIDE: BlockKey[] = ["thisMonth", "coverage"];
  * blocks, so the page reads top-to-bottom as "what needs me today" → "how is
  * the plant doing over time" rather than interleaving the two questions.
  */
-const ANALYTICS: BlockKey[] = ["qualityTrend", "productMix", "ordersByCity", "tonsByCity"];
+const ANALYTICS: BlockKey[] = ["qualityTrend", "productMix", "ordersByCity", "ordersByMonth", "tonsByCity"];
 
 /**
- * `ROW1` = the orders-by-city bars beside this month's compact numbers.
+ * `ROW1` = orders-by-city and orders-over-time, beside this month's compact
+ * numbers.
  *
  * "Volume & rejection rate" used to hold this slot alone. It was removed
  * outright (2026-10-07, client request), not relocated: it was a dual-Y-axis
@@ -50,7 +51,7 @@ const ANALYTICS: BlockKey[] = ["qualityTrend", "productMix", "ordersByCity", "to
  * plant-wide "how are we doing" charts on one line, in the order a reader
  * would ask them — are we in spec, what are we shipping, where does it go.
  */
-const ROW1: BlockKey[] = ["ordersByCity", "thisMonth"];
+const ROW1: BlockKey[] = ["ordersByCity", "ordersByMonth", "thisMonth"];
 const ROW2: BlockKey[] = ["qualityTrend", "productMix", "tonsByCity"];
 
 export default function DashboardPage() {
@@ -68,6 +69,7 @@ export default function DashboardPage() {
       if (filters.to) p.set("to", filters.to);
       if (filters.customerId) p.set("customerId", filters.customerId);
       if (filters.productId) p.set("productId", filters.productId);
+      if (filters.cityId) p.set("cityId", filters.cityId);
       const qs = p.toString();
       const res = await fetch(`/api/dashboard${qs ? `?${qs}` : ""}`);
       setPayload(res.ok ? await res.json() : null);
@@ -100,9 +102,12 @@ export default function DashboardPage() {
       case "quality":      return <Quality data={d[key]} />;
       case "readyToWeigh": return <ReadyToWeigh data={d[key]} />;
       case "coverage":     return <Coverage data={d[key]} />;
-      case "qualityTrend": return <QualityTrend data={d[key]} />;
+      // Does not read `d` — see the QualityTrend doc comment for why its data
+      // comes from its own route, driven by its own in-card product picker.
+      case "qualityTrend": return <QualityTrend filters={filters} />;
       case "productMix":   return <ProductMix data={d[key]} />;
       case "ordersByCity": return <OrdersByCity data={d[key]} />;
+      case "ordersByMonth": return <OrdersByMonth data={d[key]} />;
       case "tonsByCity":   return <TonsByCity data={d[key]} />;
       // "volumeTrend" deliberately has no case — see the ROW1 comment above.
       default:             return null;
@@ -160,13 +165,13 @@ export default function DashboardPage() {
           DashboardFilterBar. */}
       {(hasRow1 || hasRow2) && <DashboardFilterBar value={filters} onChange={setFilters} />}
 
-      {/* Orders by city, beside this month's compact numbers. The bars get
-          three quarters of the row — sixteen city labels, rotated, need the
-          width — and the stats column keeps the same compact shape it had in
-          the old three-up row. */}
+      {/* Orders by city and orders over time, beside this month's compact
+          numbers — 2:2:1, so the two charts share the width the rotated city
+          labels need while the stats column keeps its compact shape. */}
       {hasRow1 && (
-        <div className="grid gap-4 lg:grid-cols-4 items-stretch">
-          <div className="lg:col-span-3">{render("ordersByCity")}</div>
+        <div className="grid gap-4 lg:grid-cols-5 items-stretch">
+          <div className="lg:col-span-2">{render("ordersByCity")}</div>
+          <div className="lg:col-span-2">{render("ordersByMonth")}</div>
           <div>
             <ThisMonthCompact data={(payload!.data as Record<string, never>).thisMonth} />
           </div>

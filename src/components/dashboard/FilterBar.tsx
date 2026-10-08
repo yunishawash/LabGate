@@ -5,16 +5,17 @@ import { useLang } from "@/components/layout/AppShell";
 import { Combobox } from "@/components/ui/combobox";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { productPickerOptions } from "@/types";
-import type { ILabCustomer, ILabProduct } from "@/types";
+import type { ILabCustomer, ILabProduct, ICity } from "@/types";
 
 export interface DashboardFilters {
   from: string;
   to: string;
   customerId: string;
   productId: string;
+  cityId: string;
 }
 
-export const EMPTY_FILTERS: DashboardFilters = { from: "", to: "", customerId: "", productId: "" };
+export const EMPTY_FILTERS: DashboardFilters = { from: "", to: "", customerId: "", productId: "", cityId: "" };
 
 const SELECT_CLASS =
   "h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 " +
@@ -35,14 +36,16 @@ export function DashboardFilterBar({
   const { lang, t } = useLang();
   const [customers, setCustomers] = useState<ILabCustomer[]>([]);
   const [products, setProducts] = useState<ILabProduct[]>([]);
+  const [cities, setCities] = useState<ICity[]>([]);
 
   useEffect(() => {
     fetch("/api/customers?limit=1000").then((r) => r.json()).then((d) => setCustomers(d.customers || [])).catch(() => {});
     fetch("/api/lab/products").then((r) => r.json()).then((d) => setProducts(d.products || [])).catch(() => {});
+    fetch("/api/cities").then((r) => r.json()).then((d) => setCities(d.cities || [])).catch(() => {});
   }, []);
 
   const set = (patch: Partial<DashboardFilters>) => onChange({ ...value, ...patch });
-  const active = !!(value.from || value.to || value.customerId || value.productId);
+  const active = !!(value.from || value.to || value.customerId || value.productId || value.cityId);
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 shadow-sm px-4 py-3 flex items-center gap-3 flex-wrap">
@@ -71,12 +74,26 @@ export function DashboardFilterBar({
       <Combobox
         triggerClassName={SELECT_CLASS + " w-48"}
         value={value.customerId}
-        onChange={(v) => set({ customerId: v })}
+        // Picking a customer narrows past "which city" — it IS one, so the
+        // city filter is cleared rather than left sitting unused beside it.
+        onChange={(v) => set({ customerId: v, cityId: v ? "" : value.cityId })}
         placeholder={t("All customers", "كل الزبائن")}
         searchPlaceholder={t("Search customers…", "ابحث عن زبون…")}
         options={[
           { value: "", label: t("All customers", "كل الزبائن") },
           ...customers.map((c) => ({ value: c._id, label: (lang === "ar" && c.nameAr) || c.name })),
+        ]}
+      />
+
+      <Combobox
+        triggerClassName={SELECT_CLASS + " w-40"}
+        value={value.cityId}
+        onChange={(v) => set({ cityId: v, customerId: v ? "" : value.customerId })}
+        placeholder={t("All cities", "كل المدن")}
+        searchPlaceholder={t("Search cities…", "ابحث عن مدينة…")}
+        options={[
+          { value: "", label: t("All cities", "كل المدن") },
+          ...cities.map((c) => ({ value: c._id, label: (lang === "ar" && c.nameAr) || c.name })),
         ]}
       />
 

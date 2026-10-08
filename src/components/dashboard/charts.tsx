@@ -1,11 +1,19 @@
 "use client";
+import { useEffect, useState } from "react";
 import {
   ResponsiveContainer, LineChart, BarChart, PieChart, Pie, Cell,
   Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine,
 } from "recharts";
 import { useLang } from "@/components/layout/AppShell";
 import { Card } from "@/components/dashboard/blocks";
+import { Combobox } from "@/components/ui/combobox";
+import { productPickerOptions } from "@/types";
+import type { ILabProduct } from "@/types";
 import { LineChart as LineChartIcon, PieChart as PieChartIcon, BarChart3 } from "lucide-react";
+
+const IN_CARD_SELECT_CLASS =
+  "h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-700 " +
+  "outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100 cursor-pointer";
 
 /**
  * Colours for these three charts, copied from `globals.css` rather than read
@@ -60,12 +68,76 @@ const tons = (kg: number) => Math.round((kg / 1000) * 10) / 10;
 // (Pearson r = 0.24). See the Rejections report for the real
 // "where do we lose orders" answer instead.
 
-// ── L · Quality trend — in-spec % by month, against a target line ──────────
+type QualityTrendRow = { year: number; month: number; samples: number; inSpecPct: number | null };
+
+/**
+ * In-spec % by month, for ONE lab parameter — "W" (الطاقة, 10e-4J) — against
+ * a target line.
+ *
+ * Self-fetching, with its OWN product selector inside the card (client
+ * request, 2026-10-08): the page's top-of-page product filter deliberately
+ * does NOT reach this card — that filter answers "what does the catalogue
+ * look like", this one asks "how has this one grade's energy reading
+ * moved", and letting both drive the same chart would mean whichever was
+ * set last silently overrides the other with no visible reason why. The
+ * card still follows the page's date range and customer/city scope, via
+ * `filters` — those narrow WHICH ORDERS count at all, which is not a
+ * question this card's own selector is answering.
+ */
 export function QualityTrend({
-  data,
-}: { data: { year: number; month: number; samples: number; inSpecPct: number | null }[] }) {
+  filters,
+}: { filters: { from: string; to: string; customerId: string; cityId: string } }) {
   const { lang, t } = useLang();
   const TARGET = 85;
+  const [productId, setProductId] = useState("");
+  const [products, setProducts] = useState<ILabProduct[]>([]);
+  const [data, setData] = useState<QualityTrendRow[] | null>(null);
+
+  useEffect(() => {
+    fetch("/api/lab/products").then((r) => r.json()).then((d) => setProducts(d.products || [])).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const qs = new URLSearchParams();
+    if (filters.from) qs.set("from", filters.from);
+    if (filters.to) qs.set("to", filters.to);
+    if (filters.customerId) qs.set("customerId", filters.customerId);
+    if (filters.cityId) qs.set("cityId", filters.cityId);
+    if (productId) qs.set("productId", productId);
+    let cancelled = false;
+    fetch(`/api/dashboard/quality-trend?${qs.toString()}`)
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setData(d.rows || []); })
+      .catch(() => { if (!cancelled) setData([]); });
+    return () => { cancelled = true; };
+  }, [filters.from, filters.to, filters.customerId, filters.cityId, productId]);
+
+  const picker = (
+    <Combobox
+      triggerClassName={IN_CARD_SELECT_CLASS + " w-40"}
+      value={productId}
+      onChange={setProductId}
+      placeholder={t("All products", "كل الأصناف")}
+      searchPlaceholder={t("Search products…", "ابحث عن صنف…")}
+      options={[
+        { value: "", label: t("All products", "كل الأصناف") },
+        ...productPickerOptions(products, lang),
+      ]}
+    />
+  );
+
+  if (data === null) {
+    return (
+      <Card
+        title={t("Quality over time", "الجودة عبر الوقت")}
+        icon={<LineChartIcon size={16} className="text-slate-500" />}
+        action={picker}
+      >
+        <p className="text-sm text-slate-500">{t("Loading…", "جارٍ التحميل…")}</p>
+      </Card>
+    );
+  }
+
   const chartData = orient(
     data.map((d) => ({ ...d, label: monthLabel(d.year, d.month, lang) })),
     lang
@@ -76,6 +148,7 @@ export function QualityTrend({
     <Card
       title={t("Quality over time", "الجودة عبر الوقت")}
       icon={<LineChartIcon size={16} className="text-slate-500" />}
+      action={picker}
     >
       {!hasAny ? (
         <p className="text-sm text-slate-500">{t("No lab samples in the last 12 months.", "لا توجد عيّنات مختبر خلال آخر 12 شهراً.")}</p>
@@ -106,10 +179,17 @@ export function QualityTrend({
                 />
                 <Line
                   dataKey="inSpecPct" type="monotone" stroke={PASS} strokeWidth={2}
-                  connectNulls
+                  // No `connectNulls`: a month with zero samples is a GAP, not
+                  // a value to interpolate through. This mattered less when
+                  // this line tracked every sample's overall status (rarely a
+                  // whole empty month) — scoped to one parameter, as it is
+                  // now, an empty month is the common case, and a line
+                  // drawn straight across it would read as "100% that month
+                  // too" when there was no reading at all.
                   dot={(props: { cx?: number; cy?: number; payload?: { inSpecPct?: number | null } }) => {
                     const v = props.payload?.inSpecPct;
-                    const below = v != null && v < TARGET;
+                    if (v == null) return <g key={`${props.cx}-${props.cy}`} />;
+                    const below = v < TARGET;
                     return (
                       <circle
                         key={`${props.cx}-${props.cy}`}
@@ -124,8 +204,8 @@ export function QualityTrend({
           </div>
           <p className="text-xs text-slate-400 mt-1">
             {t(
-              "Warnings count as in spec. A red point is a month that fell below target.",
-              "التحذيرات محسوبة ضمن المطابق. النقطة الحمراء شهر انخفض عن الهدف."
+              "Based on the \"W\" (Energy, 10e-4J) reading only. Warnings count as in spec; a red point is a month that fell below target.",
+              "بحسب قيمة «الطاقة (W)» (10e-4J) فقط. التحذيرات محسوبة ضمن المطابق، والنقطة الحمراء شهر انخفض عن الهدف."
             )}
           </p>
         </>
@@ -201,40 +281,34 @@ export function ProductMix({
   );
 }
 
-// ── N · Decided orders per city — approved vs rejected (stacked bars) ──────
+// ── N · Posted orders per city (bars) ──────────────────────────────────────
 
 export interface CityOrdersRow {
   cityId: string;
   city: string;
   cityAr: string;
-  approved: number;
-  rejected: number;
+  orders: number;
+  kg: number;
 }
 
 /**
- * How each city's orders ended.
+ * How many POSTED orders each city sent, and how many tons they came to.
  *
- * STACKED rather than grouped, because the two segments sum to something real:
- * approved + rejected is every order that city has an answer for. A stack is
- * only honest when the parts make a whole, and here they do — orders still in
- * the chain are excluded upstream, so "not approved" never silently means "not
- * decided yet".
- *
- * Colours are the house pair, reused verbatim for the meanings they already
- * carry elsewhere on this page: the posted blue and the rejection red. Checked
- * rather than assumed — ΔE 26.9 for deuteranopia, 33.0 normal vision, both
- * well past the 8 floor, so the two segments stay distinguishable without
- * relying on the legend.
+ * Single series by client request (2026-10-08) — a rejected order never
+ * shipped, so a chart about what a city received has no "rejected" segment
+ * to show; that breakdown lives on the Rejections report instead. One series
+ * needs no legend box (the title names it); the figure that used to need a
+ * legend swatch — tonnage — is in the tooltip instead.
  */
 export function OrdersByCity({ data }: { data: { rows: CityOrdersRow[] } }) {
   const { lang, t } = useLang();
 
-  const rows = data.rows.filter((r) => r.approved + r.rejected > 0);
+  const rows = data.rows.filter((r) => r.orders > 0);
   if (!rows.length) {
     return (
       <Card title={t("Orders by city", "الطلبيات حسب المدينة")} icon={<BarChart3 size={16} className="text-slate-500" />}>
         <p className="text-sm text-slate-500">
-          {t("No decided orders in this period.", "لا توجد طلبيات محسومة في هذه الفترة.")}
+          {t("No posted orders in this period.", "لا توجد طلبيات مرحّلة في هذه الفترة.")}
         </p>
       </Card>
     );
@@ -245,36 +319,10 @@ export function OrdersByCity({ data }: { data: { rows: CityOrdersRow[] } }) {
     // A customer with no city still has orders; they get their own bar rather
     // than being dropped, so the bars still add up to the period's total.
     name: (lang === "ar" && r.cityAr) || r.city || t("No city", "بلا مدينة"),
-    total: r.approved + r.rejected,
   }));
-
-  const totals = named.reduce(
-    (a, r) => ({ approved: a.approved + r.approved, rejected: a.rejected + r.rejected }),
-    { approved: 0, rejected: 0 }
-  );
-
-  const LABEL = {
-    approved: t("Approved", "معتمدة"),
-    rejected: t("Rejected", "مرفوضة"),
-  };
 
   return (
     <Card title={t("Orders by city", "الطلبيات حسب المدينة")} icon={<BarChart3 size={16} className="text-slate-500" />}>
-      {/* The legend is a real element, not recharts' own: identity must never
-          rest on colour alone, and this one keeps its figures beside it. */}
-      <div className="flex items-center gap-4 mb-2 text-xs">
-        {(["approved", "rejected"] as const).map((k) => (
-          <span key={k} className="flex items-center gap-1.5 text-slate-500">
-            <span
-              className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
-              style={{ background: k === "approved" ? SEQ_3 : FAIL }}
-            />
-            {LABEL[k]}
-            <bdi className="tabular-nums text-slate-700 font-medium">{totals[k]}</bdi>
-          </span>
-        ))}
-      </div>
-
       <div className="h-64">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={orient(named, lang)} margin={{ top: 4, right: 8, left: -18, bottom: 4 }}>
@@ -286,21 +334,13 @@ export function OrdersByCity({ data }: { data: { rows: CityOrdersRow[] } }) {
             <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} allowDecimals={false} />
             <Tooltip
               cursor={{ fill: "#f8fafc" }}
-              formatter={(value, name) => [String(value), name as string]}
+              formatter={(value, _name, item) => {
+                const kg = (item?.payload as { kg?: number } | undefined)?.kg ?? 0;
+                return [`${value} ${t("orders", "طلبية")} (${tons(kg)} ${t("t", "طن")})`, t("Posted", "مرحّلة")];
+              }}
               contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }}
             />
-            {/* `stroke`/`strokeWidth` in the surface colour is the 2px gap
-                between the two segments — without it they read as one bar of
-                an ambiguous colour at small heights. */}
-            <Bar
-              dataKey="approved" stackId="orders" name={LABEL.approved}
-              fill={SEQ_3} stroke="#fff" strokeWidth={2} maxBarSize={34}
-            />
-            <Bar
-              dataKey="rejected" stackId="orders" name={LABEL.rejected}
-              fill={FAIL} stroke="#fff" strokeWidth={2} maxBarSize={34}
-              radius={[3, 3, 0, 0]}
-            />
+            <Bar dataKey="orders" name={t("Posted", "مرحّلة")} fill={SEQ_3} maxBarSize={34} radius={[3, 3, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -313,6 +353,55 @@ export function OrdersByCity({ data }: { data: { rows: CityOrdersRow[] } }) {
             "«بلا مدينة» هي طلبيات زبائن لم تُسجَّل مدينتهم."
           )}
         </p>
+      )}
+    </Card>
+  );
+}
+
+// ── N2 · Orders over time — tonnage posted per month (bars) ───────────────
+
+export interface MonthOrdersRow {
+  year: number;
+  month: number;
+  kg: number;
+  orders: number;
+}
+
+/**
+ * The same tonnage question as the city chart beside it, asked across time
+ * instead of across place. One series, one axis — the trap `volumeTrend`
+ * fell into (tonnage on one scale, a rate on another) doesn't apply here
+ * because there's only one measure on the chart.
+ */
+export function OrdersByMonth({ data }: { data: MonthOrdersRow[] }) {
+  const { lang, t } = useLang();
+  const hasAny = data.some((d) => d.kg > 0);
+  const chartData = orient(data.map((d) => ({ ...d, label: monthLabel(d.year, d.month, lang) })), lang);
+
+  return (
+    <Card title={t("Orders over time", "الطلبيات عبر الوقت")} icon={<BarChart3 size={16} className="text-slate-500" />}>
+      {!hasAny ? (
+        <p className="text-sm text-slate-500">{t("No posted orders in the last 12 months.", "لا توجد طلبيات مرحّلة خلال آخر 12 شهراً.")}</p>
+      ) : (
+        <div className="h-64" dir="ltr">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} margin={{ top: 4, right: 8, left: -18, bottom: 4 }}>
+              <CartesianGrid stroke={GRID} vertical={false} />
+              <XAxis dataKey="label" tick={AXIS_TICK} tickLine={false} axisLine={false} />
+              <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} width={34}
+                tickFormatter={(v: number) => tons(v).toString()} />
+              <Tooltip
+                cursor={{ fill: "#f8fafc" }}
+                formatter={(value, _name, item) => {
+                  const orders = (item?.payload as { orders?: number } | undefined)?.orders ?? 0;
+                  return [`${tons(Number(value))} ${t("t", "طن")} (${orders} ${t("orders", "طلبية")})`, t("Posted", "مرحّلة")];
+                }}
+                contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }}
+              />
+              <Bar dataKey="kg" name={t("Posted", "مرحّلة")} fill={SEQ_3} maxBarSize={34} radius={[3, 3, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
       )}
     </Card>
   );

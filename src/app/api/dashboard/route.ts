@@ -6,6 +6,7 @@ import { visibilityFilter, andFilters, SALES_STAGES, type Actor } from "@/lib/sa
 import { liveDelegationRoles, stagesOwnedBy } from "@/lib/salesAuth";
 import { blocksFor, STUCK_HOURS, type BlockKey } from "@/lib/dashboardBlocks";
 import SalesOrder from "@/models/SalesOrder";
+import LabCustomer from "@/models/LabCustomer";
 import LabSample from "@/models/LabSample";
 import Delegation from "@/models/Delegation";
 import User from "@/models/User";
@@ -50,7 +51,28 @@ export async function GET(req: NextRequest) {
   const range = dateRange(searchParams.get("from"), searchParams.get("to"));
   const customerId = oid(searchParams.get("customerId") || "");
   const productId = oid(searchParams.get("productId") || "");
+  const cityId = oid(searchParams.get("cityId") || "");
   const dated = (field: string) => (range ? { [field]: range } : {});
+
+  /**
+   * The customer-scope the filter bar's city picker resolves to.
+   *
+   * A city isn't a field on the order — it's a field on the CUSTOMER — so
+   * "orders from city X" means "orders from one of X's customers", resolved
+   * to an id list once here rather than re-joined per aggregation. A specific
+   * `customerId` wins over `cityId` when both are set (picking one customer
+   * is the narrower, more specific choice; the city that customer happens to
+   * be in is then implied, not a second independent condition to satisfy).
+   */
+  const cityCustomerScope: Record<string, unknown> = {};
+  if (customerId) {
+    cityCustomerScope.customerId = customerId;
+  } else if (cityId) {
+    const ids = await LabCustomer.find({ cityId }).distinct("_id");
+    // An empty match rather than an unfiltered one: a city with zero
+    // customers must show zero orders, not every order in the system.
+    cityCustomerScope.customerId = { $in: ids.length ? ids : [null] };
+  }
   /**
    * What a tonne SHIPPED is, as one expression.
    *
@@ -63,12 +85,16 @@ export async function GET(req: NextRequest) {
    * showed 2346.9 t and 2352.0 t side by side.
    */
   const SHIPPED_KG = { $ifNull: ["$lines.actualWeightKg", "$lines.lineWeightKg"] };
+  // Same definition, usable WITHOUT unwinding — needed where an order must
+  // still count once (e.g. an order count per city) while its lines' weights
+  // still need summing.
+  const SHIPPED_KG_PER_ORDER = {
+    $sum: { $map: { input: "$lines", as: "l", in: { $ifNull: ["$$l.actualWeightKg", "$$l.lineWeightKg"] } } },
+  };
 
-  const orderExtra: Record<string, unknown> = {};
-  if (customerId) orderExtra.customerId = customerId;
+  const orderExtra: Record<string, unknown> = { ...cityCustomerScope };
   if (productId) orderExtra["lines.productId"] = productId;
-  const sampleExtra: Record<string, unknown> = {};
-  if (customerId) sampleExtra.customerId = customerId;
+  const sampleExtra: Record<string, unknown> = { ...cityCustomerScope };
   if (productId) sampleExtra.productId = productId;
 
   const data: Record<string, unknown> = {};
@@ -269,37 +295,14 @@ export async function GET(req: NextRequest) {
   // moved to the Rejections report instead.
 
 
-  // ── L · Quality trend — in-spec % by month ────────────────────────────────
-  if (want("qualityTrend")) {
-    // Plant-wide, not order-scoped — the same precedent the "quality" block
-    // above already sets in its own caption: lab data isn't confidentiality-
-    // gated by the sales chain, samples aren't all linked to an order.
-    const rows = await LabSample.aggregate([
-      { $match: { isActive: true, sampleDate: { $gte: windowStart, $lte: windowEnd }, ...sampleExtra } },
-      {
-        $group: {
-          _id: { y: { $year: "$sampleDate" }, m: { $month: "$sampleDate" }, status: "$overallStatus" },
-          n: { $sum: 1 },
-        },
-      },
-    ]);
-    const byKey = new Map<string, { pass: number; warning: number; fail: number }>();
-    for (const r of rows) {
-      const key = `${r._id.y}-${r._id.m}`;
-      const cur = byKey.get(key) ?? { pass: 0, warning: 0, fail: 0 };
-      cur[r._id.status as "pass" | "warning" | "fail"] = r.n;
-      byKey.set(key, cur);
-    }
-    data.qualityTrend = monthSlots().map(({ year, month }) => {
-      const key = `${year}-${month + 1}`;
-      const c = byKey.get(key);
-      const total = c ? c.pass + c.warning + c.fail : 0;
-      return {
-        year, month, samples: total,
-        inSpecPct: total ? Math.round(((c!.pass + c!.warning) / total) * 1000) / 10 : null,
-      };
-    });
-  }
+  // L — "Quality trend" (in-spec % by month) moved to its own route,
+  // /api/dashboard/quality-trend — see that file for why: the card owns an
+  // in-card parameter/product selector the page's top filters must not
+  // drive. `qualityTrend` stays a BlockKey purely so ROLE_BLOCKS still
+  // decides who the card renders FOR; nothing here computes its data — the
+  // sentinel below is only so the page's `d[key] !== undefined` presence
+  // check still lets the card through.
+  if (want("qualityTrend")) data.qualityTrend = true;
 
   // ── M · Product mix — tonnage share, last 12 months, posted orders ───────
   if (want("productMix")) {
@@ -339,14 +342,11 @@ export async function GET(req: NextRequest) {
   }
 
   /**
-   * ── N · Decided orders per city — approved vs rejected ──────────────────
+   * ── N · Posted orders per city — count + tonnage ────────────────────────
    *
-   * Only DECIDED orders. The two segments sum to the bar's height, which is
-   * what makes a stack honest: approved + rejected = every order this city
-   * has an answer for. Orders still in the chain are deliberately left out —
-   * folding "not yet decided" into "not approved" would read as a rejection
-   * the city never received, and would make the total move as orders age
-   * rather than as decisions are taken.
+   * POSTED only, by client request (2026-10-08): a rejected order never
+   * shipped, so it has no place on a chart about what a city received. What
+   * doesn't ship belongs to the Rejections report, not here.
    *
    * Joined through the customer, because a city belongs to the customer and
    * an order belongs to the customer — an order has no city of its own.
@@ -356,7 +356,7 @@ export async function GET(req: NextRequest) {
       {
         $match: andFilters(
           visible,
-          { status: { $in: ["Posted", "Rejected"] }, orderDate: { $gte: windowStart, $lte: windowEnd } },
+          { status: "Posted", postedAt: { $gte: windowStart, $lte: windowEnd } },
           orderExtra
         ),
       },
@@ -367,11 +367,11 @@ export async function GET(req: NextRequest) {
       {
         $group: {
           _id: { cityId: "$city._id", name: "$city.name", nameAr: "$city.nameAr" },
-          approved: { $sum: { $cond: [{ $eq: ["$status", "Posted"] }, 1, 0] } },
-          rejected: { $sum: { $cond: [{ $eq: ["$status", "Rejected"] }, 1, 0] } },
+          orders: { $sum: 1 },
+          kg: { $sum: SHIPPED_KG_PER_ORDER },
         },
       },
-      { $sort: { approved: -1, rejected: -1 } },
+      { $sort: { orders: -1 } },
     ]);
 
     /**
@@ -391,10 +391,46 @@ export async function GET(req: NextRequest) {
         // own bar rather than dropped, so the totals still add up.
         city: (r._id.name as string) ?? "",
         cityAr: (r._id.nameAr as string) ?? "",
-        approved: r.approved as number,
-        rejected: r.rejected as number,
+        orders: r.orders as number,
+        kg: r.kg as number,
       })),
     };
+  }
+
+  /**
+   * ── N2 · Orders over time — tonnage posted per month ────────────────────
+   *
+   * Same shape as the per-city tonnage below, grouped by month instead of
+   * city — one series, so the client can see volume trending up or down
+   * without the dual-axis trap `volumeTrend` fell into (see the removal note
+   * above this block).
+   */
+  if (want("ordersByMonth")) {
+    const rows = await SalesOrder.aggregate([
+      {
+        $match: andFilters(
+          visible,
+          { status: "Posted", postedAt: { $gte: windowStart, $lte: windowEnd } },
+          orderExtra
+        ),
+      },
+      { $unwind: "$lines" },
+      {
+        $group: {
+          _id: { y: { $year: "$postedAt" }, m: { $month: "$postedAt" } },
+          kg: { $sum: SHIPPED_KG },
+          orderIds: { $addToSet: "$_id" },
+        },
+      },
+    ]);
+    const byKey = new Map<string, { kg: number; orders: number }>();
+    for (const r of rows) {
+      byKey.set(`${r._id.y}-${r._id.m}`, { kg: r.kg as number, orders: (r.orderIds as unknown[]).length });
+    }
+    data.ordersByMonth = monthSlots().map(({ year, month }) => {
+      const c = byKey.get(`${year}-${month + 1}`);
+      return { year, month, kg: c?.kg ?? 0, orders: c?.orders ?? 0 };
+    });
   }
 
   /**

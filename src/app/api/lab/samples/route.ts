@@ -71,9 +71,11 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   await connectDB();
-  // Recording a QC result is the lab's job. The CMMS let ANY signed-in user
-  // create a sample.
-  const check = await requireRole("lab_technician", "technical_manager");
+  // Recording a QC result is the lab technician's job, and his alone (client
+  // request, 2026-10-08) — the CMMS let ANY signed-in user create a sample.
+  // The Technical Manager still EDITS one (see the PUT handler) and reviews
+  // it at his own stage; he no longer originates one.
+  const check = await requireRole("lab_technician");
   if (check.error) return check.error;
   const { userDoc } = check;
 
