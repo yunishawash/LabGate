@@ -45,6 +45,10 @@ export async function GET(req: NextRequest) {
   const batchId = searchParams.get("batchId");
   if (batchId) filter.batchId = containsRegex(batchId);
 
+  const mainProduct = searchParams.get("mainProduct");
+  if (mainProduct === "true") filter.isMainProduct = true;
+  else if (mainProduct === "false") filter.isMainProduct = { $ne: true };
+
   // Free-text search spans sample number, batch and order number — the three
   // things a person actually has in hand when chasing a delivery.
   const search = searchParams.get("search");
@@ -157,6 +161,7 @@ export async function POST(req: NextRequest) {
     results,
     overallStatus,
     notes: notesCheck.value,
+    isMainProduct: body.isMainProduct === true,
     ...decisionFields,
   });
 

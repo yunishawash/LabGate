@@ -441,6 +441,10 @@ export interface ILabSample {
   finalDecisionByName?: string;
   finalDecisionAt?: string | null;
   notes?: string;
+  /** A test of the plant's main raw input (wheat intake QC), not a
+   *  finished-product check — see the model for why this is a flag rather
+   *  than inferred from the product. */
+  isMainProduct?: boolean;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;

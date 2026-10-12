@@ -7,7 +7,7 @@ import { useSession } from "next-auth/react";
 import {
   LayoutDashboard, ClipboardList, CheckSquare, PenLine, FlaskConical,
   Users2, BarChart3, ScrollText, UserCog, Activity, Settings2,
-  Menu, X, Languages, LifeBuoy,
+  Menu, X, Languages, LifeBuoy, Package,
   Bell,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -36,6 +36,10 @@ const NAV: NavItem[] = [
   { href: "/approvals",   label: "Approvals",       labelAr: "الاعتمادات",    icon: <CheckSquare     size={18} />, badge: "approvals" },
   { href: "/sign-off",    label: "Results Sign-off", labelAr: "اعتماد النتائج", icon: <PenLine        size={18} />, badge: "signOff" },
   { href: "/lab",         label: "Lab",             labelAr: "المختبر",       icon: <FlaskConical    size={18} />, module: "lab" },
+  // Same "lab" permission as the page above — this is still lab catalogue
+  // data (LabProduct), just split into its own screen (client request,
+  // 2026-10-12) rather than a second grantable permission nobody asked for.
+  { href: "/lab/catalog", label: "Product Catalog", labelAr: "كتالوج المنتجات", icon: <Package         size={18} />, module: "lab" },
   { href: "/customers",   label: "Customers",       labelAr: "الزبائن",       icon: <Users2          size={18} />, module: "customers" },
   { href: "/reports",     label: "Reports",         labelAr: "التقارير",      icon: <BarChart3       size={18} />, module: "reports" },
   // No `module`: everyone in the chain gets notified, so everyone needs the page.
@@ -66,7 +70,22 @@ export function Sidebar({ lang, onToggleLang, unreadCount = 0 }: SidebarProps) {
     item.module ? canAccessModule(role, permissions, item.module) : true
   );
 
-  const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/");
+  /**
+   * The MOST SPECIFIC href wins, not every href the path happens to start
+   * with — "/lab" is a prefix of "/lab/catalog", and without this both would
+   * light up together on the Catalog page, which is the one page the whole
+   * point of a separate nav entry is to tell apart from Lab itself.
+   */
+  const isActive = (href: string) => {
+    const longest = NAV.reduce(
+      (best, item) =>
+        (pathname === item.href || pathname.startsWith(item.href + "/")) && item.href.length > best.length
+          ? item.href
+          : best,
+      ""
+    );
+    return longest === href;
+  };
 
   const navContent = (
     <div className="flex flex-col h-full">

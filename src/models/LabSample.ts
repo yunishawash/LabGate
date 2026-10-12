@@ -75,6 +75,16 @@ export interface ILabSampleDoc extends Document {
   finalDecisionByName?: string;
   finalDecisionAt?: Date | null;
   notes?: string;
+  /**
+   * Flags this as a test of the plant's main raw input — wheat intake QC —
+   * rather than a finished-product check (client request, 2026-10-12, built
+   * alongside the new "أصناف أساسية" product type for exactly this: a sample
+   * with no order and no customer, just "is this load of wheat good"). A
+   * plain boolean rather than inferring it from the product's type, because
+   * the same product could in principle be sampled for either reason, and
+   * the technician recording it is the one who knows which this was.
+   */
+  isMainProduct: boolean;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -129,6 +139,7 @@ const LabSampleSchema = new Schema<ILabSampleDoc>(
     finalDecisionByName: { type: String, default: "" },
     finalDecisionAt:     { type: Date, default: null },
     notes:         { type: String, default: "" },
+    isMainProduct: { type: Boolean, default: false },
     isActive:      { type: Boolean, default: true },
   },
   { timestamps: true }
@@ -140,6 +151,7 @@ LabSampleSchema.index({ productId: 1 });
 LabSampleSchema.index({ customerId: 1, sampleDate: -1 }); // per-customer history
 LabSampleSchema.index({ batchId: 1 });
 LabSampleSchema.index({ overallStatus: 1 });
+LabSampleSchema.index({ isMainProduct: 1, sampleDate: -1 });
 LabSampleSchema.index({ "results.parameterId": 1 });
 
 export default mongoose.models.LabSample ||

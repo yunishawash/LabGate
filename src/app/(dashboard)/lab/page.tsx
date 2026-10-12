@@ -9,6 +9,7 @@ import { StatCard } from "@/components/ui/stat-card";
 import { QcStatusBadge } from "@/components/ui/qc-status-badge";
 import { DecisionBadge } from "@/components/ui/decision-badge";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Combobox } from "@/components/ui/combobox";
 import { Label } from "@/components/ui/label";
@@ -67,15 +68,16 @@ export default function LabPage() {
   const [shift, setShift] = useState("all");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [mainProduct, setMainProduct] = useState("all");
   const [parameterFilter, setParameterFilter] = useState("");
 
   const hasFilters =
     !!search || product !== "all" || customer !== "all" ||
-    status !== "all" || shift !== "all" || !!from || !!to;
+    status !== "all" || shift !== "all" || !!from || !!to || mainProduct !== "all";
 
   const clearFilters = () => {
     setSearch(""); setProduct("all"); setCustomer("all");
-    setStatus("all"); setShift("all"); setFrom(""); setTo("");
+    setStatus("all"); setShift("all"); setFrom(""); setTo(""); setMainProduct("all");
     setPage(1);
   };
 
@@ -110,8 +112,9 @@ export default function LabPage() {
     if (shift !== "all") params.set("shift", shift);
     if (from) params.set("from", from);
     if (to) params.set("to", to);
+    if (mainProduct !== "all") params.set("mainProduct", mainProduct);
     return params;
-  }, [search, product, customer, status, shift, from, to]);
+  }, [search, product, customer, status, shift, from, to, mainProduct]);
 
   const fetchSamples = useCallback(async () => {
     setLoading(true);
@@ -203,6 +206,11 @@ export default function LabPage() {
           <div className="flex items-center gap-1.5">
             <span className="font-medium text-slate-900">{s.sampleNumber}</span>
             {s.attachments?.length > 0 && <Paperclip size={12} className="text-slate-400 flex-shrink-0" />}
+            {s.isMainProduct && (
+              <Badge variant="secondary" className="bg-indigo-100 text-indigo-700 px-1.5 py-0 text-[10px]">
+                {t("Main product", "منتج رئيسي")}
+              </Badge>
+            )}
           </div>
           {/* An order number here is the tell that this sample came through the
               approval chain rather than routine shift QC. */}
@@ -375,6 +383,17 @@ export default function LabPage() {
             <Input type="date" value={to} min={from || undefined} max={toDateInputValue(new Date())}
               onChange={(e) => { setTo(e.target.value); setPage(1); }} className="h-9 w-40" />
 
+            <Combobox
+              triggerClassName={SELECT_CLASS + " w-40"}
+              value={mainProduct}
+              onChange={(v) => { setMainProduct(v); setPage(1); }}
+              options={[
+                { value: "all", label: t("All samples", "كل العيّنات") },
+                { value: "true", label: t("Main product only", "منتج رئيسي فقط") },
+                { value: "false", label: t("Finished product only", "منتج نهائي فقط") },
+              ]}
+            />
+
             {hasFilters && (
               <button onClick={clearFilters} className="h-9 px-3 rounded-lg text-sm text-slate-500 hover:text-slate-900 hover:bg-slate-100 cursor-pointer flex items-center gap-1.5">
                 <X size={14} />
@@ -455,6 +474,11 @@ export default function LabPage() {
               {viewSample && <QcStatusBadge status={viewSample.overallStatus} />}
               {viewSample && viewSample.finalDecision !== "pending" && (
                 <DecisionBadge decision={viewSample.finalDecision} />
+              )}
+              {viewSample?.isMainProduct && (
+                <Badge variant="secondary" className="bg-indigo-100 text-indigo-700">
+                  {t("Main product", "منتج رئيسي")}
+                </Badge>
               )}
             </DialogTitle>
           </DialogHeader>
@@ -568,7 +592,6 @@ export default function LabPage() {
         <ProductSpecsTab
           products={products}
           parameters={parameters}
-          onProductsChanged={loadProducts}
           onParametersChanged={loadParameters}
         />
       )}

@@ -73,6 +73,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
   }
   if ("shift" in body) update.shift = oneOf(body.shift, LAB_SHIFTS, "");
   if ("batchId" in body) update.batchId = str(body.batchId, 80);
+  if ("isMainProduct" in body) update.isMainProduct = body.isMainProduct === true;
   if ("notes" in body) {
     const notesCheck = strictStr(body.notes, 5000, "Notes");
     if (!notesCheck.ok) return badStrictStr(notesCheck);

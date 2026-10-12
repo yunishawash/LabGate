@@ -71,6 +71,7 @@ export function SampleDialog({
   const [shift, setShift] = useState("");
   const [batchId, setBatchId] = useState("");
   const [notes, setNotes] = useState("");
+  const [isMainProduct, setIsMainProduct] = useState(false);
   const [values, setValues] = useState<Record<string, string>>({});
 
   const [specs, setSpecs] = useState<ILabProductSpec[]>([]);
@@ -101,6 +102,7 @@ export function SampleDialog({
       setShift(editing.shift ?? "");
       setBatchId(editing.batchId ?? "");
       setNotes(editing.notes ?? "");
+      setIsMainProduct(editing.isMainProduct === true);
       setValues(
         Object.fromEntries(editing.results.map((r) => [r.parameterId, String(r.value)]))
       );
@@ -109,7 +111,7 @@ export function SampleDialog({
       setProductId(prefill?.productId ?? "");
       setCustomerId(prefill?.customerId ?? "");
       setSampleDate(toDateInputValue(new Date()));
-      setShift(""); setBatchId(""); setNotes("");
+      setShift(""); setBatchId(""); setNotes(""); setIsMainProduct(false);
       setValues({});
       setExistingAttachments([]);
     }
@@ -230,6 +232,7 @@ export function SampleDialog({
           shift,
           batchId,
           notes,
+          isMainProduct,
           results: entered.map((p) => ({ parameterId: p.spec.parameterId, value: p.value })),
           ...(canSignOff ? { finalDecision: effectiveDecision } : {}),
         };
@@ -307,7 +310,7 @@ export function SampleDialog({
     onSaved(saved);
     onClose();
   }, [
-    productId, customerId, sampleDate, shift, batchId, notes, entered, implausible, files,
+    productId, customerId, sampleDate, shift, batchId, notes, isMainProduct, entered, implausible, files,
     pendingRemovals, savedSample, editing, effectiveDecision, canSignOff, onSaved, onClose, t, lang,
   ]);
 
@@ -382,6 +385,22 @@ export function SampleDialog({
               <Input value={batchId} onChange={(e) => setBatchId(e.target.value)}
                 placeholder={t("The physical lot this sample came from", "الدفعة الفعلية التي أُخذت منها العيّنة")} />
             </div>
+
+            <label className="flex items-center gap-2.5 sm:col-span-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isMainProduct}
+                onChange={(e) => setIsMainProduct(e.target.checked)}
+                className="w-4 h-4 accent-cyan-600 cursor-pointer flex-shrink-0"
+              />
+              <span className="text-sm text-slate-700">{t("Main-product test", "اختبار منتج رئيسي")}</span>
+              <span className="text-xs text-slate-400">
+                {t(
+                  "A test of the main raw input (e.g. incoming wheat), not a finished product.",
+                  "فحص للمنتج الرئيسي (مثل القمح الوارد)، وليس منتجًا نهائيًا."
+                )}
+              </span>
+            </label>
           </div>
 
           <div>

@@ -5,23 +5,34 @@ import { badRequest, dateRange, oid } from "@/lib/apiHelpers";
 import LabSample from "@/models/LabSample";
 import LabCustomer from "@/models/LabCustomer";
 import LabParameter from "@/models/LabParameter";
+import LabProduct from "@/models/LabProduct";
 
 /**
- * Quality-over-time, for ONE parameter — "W" (الطاقة, 10e-4J) today — rather
- * than a sample's overall pass/fail.
+ * Quality-over-time, for ONE lab-tested grade (or all of them) and ONE lab
+ * parameter (client request, 2026-10-12 — widened from the original,
+ * "W"-only build of 2026-10-08, then widened again the same day from
+ * "flour only" to every type that actually goes through the lab).
  *
- * Split out of the main `/api/dashboard` payload (2026-10-08, client
- * request) because this card owns its OWN product selector, inside its own
- * card, independent of the page's top filter bar — the top product filter
- * answers "what does the catalogue look like", this one asks "how has this
- * one grade's energy reading moved", and the two must not fight over the
- * same query param. A dedicated route lets the card re-fetch on its own
- * selector without re-running every other dashboard block.
+ * Split out of the main `/api/dashboard` payload because this card owns its
+ * OWN product AND parameter selectors, inside its own card, independent of
+ * the page's top filter bar — the top product filter answers "what does the
+ * catalogue look like", this card asks "how has this one grade's chosen test
+ * moved", and the two must not fight over the same query param. A dedicated
+ * route lets the card re-fetch on its own selectors without re-running every
+ * other dashboard block.
  *
  * Still takes the page's own date range and customer/city scope — those are
- * "which orders count at all", not "which parameter" — so the card still
+ * "which orders count at all", not "which grade or test" — so the card still
  * moves with the rest of the dashboard when the client narrows to a date
  * range or a city, just never to a product.
+ *
+ * Scoped to lab-tested types, not the whole catalogue: this card asks "is
+ * what the lab actually tests in spec", and a type whose orders skip the lab
+ * (`orderRequiresLabTest: false`) has no business on a quality chart. Not
+ * hardcoded to "Flour" — any type flagged lab-tested qualifies, including one
+ * added after this card was built, and including a type that is itself the
+ * sampled unit (no grades under it, like a raw-material intake type) rather
+ * than only types with grades.
  */
 export async function GET(req: NextRequest) {
   await connectDB();
@@ -36,6 +47,13 @@ export async function GET(req: NextRequest) {
   if (productId) {
     productOid = oid(productId);
     if (!productOid) return badRequest("Invalid productId");
+  }
+
+  const parameterId = searchParams.get("parameterId");
+  let parameterOid = null;
+  if (parameterId) {
+    parameterOid = oid(parameterId);
+    if (!parameterOid) return badRequest("Invalid parameterId");
   }
 
   const customerId = searchParams.get("customerId");
@@ -63,12 +81,53 @@ export async function GET(req: NextRequest) {
     scope.customerId = { $in: ids.length ? ids : [null] };
   }
 
-  const w = await LabParameter.findOne({ name: "W" }).select("_id").lean();
-  if (!w) {
-    // The parameter isn't configured yet — an empty trend, not an error, so
-    // the card renders its own "not configured" state rather than crashing.
+  /**
+   * Every orderable grade under a lab-tested TYPE — i.e. the same set the
+   * in-card picker offers (see `labTestedOptions` in charts.tsx). A chosen
+   * `productOid` is trusted to BE one of these without re-checking
+   * membership — the picker only ever offers this set to begin with, so a
+   * mismatched id here would have to be typed by hand against the API
+   * directly, which an empty result answers well enough.
+   *
+   * "Orderable" mirrors `isOrderableProduct` (types/index.ts): a grade, or a
+   * TYPE that has no grades of its own and so is the sampled unit directly
+   * (e.g. a raw-material intake type with nothing under it).
+   */
+  let productMatch: Record<string, unknown>;
+  if (productOid) {
+    productMatch = { productId: productOid };
+  } else {
+    const all = await LabProduct.find({ isActive: true })
+      .select("_id parentId orderRequiresLabTest").lean();
+    const childCount = new Map<string, number>();
+    for (const p of all) {
+      if (p.parentId) childCount.set(String(p.parentId), (childCount.get(String(p.parentId)) ?? 0) + 1);
+    }
+    const labTestedTypeIds = new Set(
+      all.filter((p) => !p.parentId && p.orderRequiresLabTest !== false).map((p) => String(p._id))
+    );
+    const gradeIds = all
+      .filter((p) =>
+        p.parentId
+          ? labTestedTypeIds.has(String(p.parentId))
+          : labTestedTypeIds.has(String(p._id)) && !childCount.get(String(p._id))
+      )
+      .map((p) => p._id);
+    // No lab-tested type configured yet: an empty trend, not every product
+    // in the system standing in for it.
+    productMatch = { productId: { $in: gradeIds.length ? gradeIds : [null] } };
+  }
+
+  const param = parameterOid
+    ? await LabParameter.findOne({ _id: parameterOid }).select("_id").lean()
+    : await LabParameter.findOne({ name: "W" }).select("_id").lean();
+  if (!param) {
+    // No such parameter (or "W" isn't configured yet, on first load with no
+    // explicit choice): an empty trend, not an error, so the card renders
+    // its own "not configured" state rather than crashing.
     return NextResponse.json({ rows: [] });
   }
+  const paramId = (param as { _id: unknown })._id;
 
   const now = new Date();
   const windowEnd = range?.$lte ?? now;
@@ -77,15 +136,15 @@ export async function GET(req: NextRequest) {
   const match: Record<string, unknown> = {
     isActive: true,
     sampleDate: { $gte: windowStart, $lte: windowEnd },
-    "results.parameterId": (w as { _id: unknown })._id,
+    "results.parameterId": paramId,
     ...scope,
+    ...productMatch,
   };
-  if (productOid) match.productId = productOid;
 
   const rows = await LabSample.aggregate([
     { $match: match },
     { $unwind: "$results" },
-    { $match: { "results.parameterId": (w as { _id: unknown })._id } },
+    { $match: { "results.parameterId": paramId } },
     {
       $group: {
         _id: { y: { $year: "$sampleDate" }, m: { $month: "$sampleDate" }, status: "$results.status" },
@@ -119,5 +178,7 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  return NextResponse.json({ rows: out });
+  // `parameterId` echoed back so the card can sync its own selector on first
+  // load, when the client sent none and the server fell back to "W".
+  return NextResponse.json({ rows: out, parameterId: String(paramId) });
 }

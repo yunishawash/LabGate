@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { RotateCcw, Save, Plus, Package, SlidersHorizontal, Trash2, Pencil } from "lucide-react";
+import Link from "next/link";
+import { RotateCcw, Save, Plus, Package, SlidersHorizontal, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Combobox } from "@/components/ui/combobox";
@@ -45,18 +46,19 @@ const EMPTY_PARAM = {
 };
 
 /**
- * The add/edit form for a catalogue row.
+ * Per-product spec limits, and the plant-wide parameter (test) catalog.
  *
- * `parentId` empty means a TYPE (نوع منتج); set means a GRADE (صنف) of that
- * type. `orderRequiresLabTest` is only ever sent for a type — a grade inherits
- * it, and the server refuses to set it on one.
+ * Which product TYPES AND GRADES exist used to be edited here too, until it
+ * moved to its own page — Lab → Product Catalog (client request, 2026-10-12)
+ * — because that is a different, much rarer job (a grade launches or is
+ * retired) than this one (routine QA work, done constantly), and listing
+ * every type and every grade on every visit here buried the routine job
+ * under the structural one. `products` is still read here — the picker below
+ * needs the whole catalogue to choose from — just no longer written.
  */
-const EMPTY_PRODUCT = { name: "", nameAr: "", parentId: "", orderRequiresLabTest: true };
-
-export function ProductSpecsTab({ products, parameters, onProductsChanged, onParametersChanged }: {
+export function ProductSpecsTab({ products, parameters, onParametersChanged }: {
   products: ILabProduct[];
   parameters: ILabParameter[];
-  onProductsChanged: () => void;
   onParametersChanged: () => void;
 }) {
   const { lang, t } = useLang();
@@ -68,19 +70,18 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
   const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  // Add AND rename share this one dialog — `editingProduct` set means rename.
-  const [productDialogOpen, setProductDialogOpen] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<ILabProduct | null>(null);
-  const [productForm, setProductForm] = useState(EMPTY_PRODUCT);
-  const [productSaving, setProductSaving] = useState(false);
-  const [productError, setProductError] = useState("");
-
   // Global parameter (test) catalog — add/edit/remove.
   const [paramDialogOpen, setParamDialogOpen] = useState(false);
   const [editingParam, setEditingParam] = useState<ILabParameter | null>(null);
   const [paramForm, setParamForm] = useState(EMPTY_PARAM);
   const [paramSaving, setParamSaving] = useState(false);
   const [paramError, setParamError] = useState("");
+
+  // "Copy from…" — clone another product's resolved spec sheet onto this one.
+  const [copyDialogOpen, setCopyDialogOpen] = useState(false);
+  const [copySourceId, setCopySourceId] = useState("");
+  const [copySaving, setCopySaving] = useState(false);
+  const [copyError, setCopyError] = useState("");
 
   useEffect(() => {
     // The first ORDERABLE row, not the first row: "طحين" has no spec sheet of
@@ -113,6 +114,37 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
   }, [productId, t]);
 
   useEffect(() => { loadSpecs(); }, [loadSpecs]);
+
+  const openCopyDialog = () => {
+    setCopySourceId("");
+    setCopyError("");
+    setCopyDialogOpen(true);
+  };
+
+  const runCopy = async () => {
+    if (!productId || !copySourceId) return;
+    setCopySaving(true);
+    setCopyError("");
+    try {
+      const res = await fetch(`/api/lab/products/${productId}/specs/copy-from`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceProductId: copySourceId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setCopyError((data as { error?: string }).error || `Error ${res.status}`);
+        setCopySaving(false);
+        return;
+      }
+      setCopySaving(false);
+      setCopyDialogOpen(false);
+      await loadSpecs();
+    } catch {
+      setCopyError(t("Network error — please try again.", "خطأ في الشبكة — يُرجى المحاولة مرة أخرى."));
+      setCopySaving(false);
+    }
+  };
 
   const setField = (parameterId: string, field: keyof Draft, value: string) =>
     setDrafts((d) => ({ ...d, [parameterId]: { ...d[parameterId], [field]: value } as Draft }));
@@ -165,89 +197,6 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
     await fetch(`/api/lab/thresholds/${spec.overrideId}`, { method: "DELETE" });
     await loadSpecs();
     setSavingId(null);
-  };
-
-  const openAddProduct = (parentId = "") => {
-    setEditingProduct(null);
-    setProductForm({ ...EMPTY_PRODUCT, parentId });
-    setProductError("");
-    setProductDialogOpen(true);
-  };
-  const openRenameProduct = (p: ILabProduct) => {
-    setEditingProduct(p);
-    setProductForm({
-      name: p.name,
-      nameAr: p.nameAr ?? "",
-      parentId: p.parentId ?? "",
-      // Absent on a product saved before the flag existed — all flour, all
-      // tested. Defaulting the other way would quietly drop the lab stage.
-      orderRequiresLabTest: p.orderRequiresLabTest !== false,
-    });
-    setProductError("");
-    setProductDialogOpen(true);
-  };
-
-  const saveProduct = async () => {
-    if (!productForm.name.trim()) return;
-    setProductSaving(true);
-    setProductError("");
-    try {
-      const res = await fetch(
-        editingProduct ? `/api/lab/products/${editingProduct._id}` : "/api/lab/products",
-        {
-          method: editingProduct ? "PUT" : "POST",
-          headers: { "Content-Type": "application/json" },
-          // `orderRequiresLabTest` goes only with a TYPE. Sending it for a
-          // grade is a 400 by design: the decision belongs to the type, and
-          // a grade that disagreed with its own type would split one
-          // product's orders across two routes.
-          body: JSON.stringify(
-            productForm.parentId
-              ? editingProduct
-                ? { name: productForm.name, nameAr: productForm.nameAr }
-                : { name: productForm.name, nameAr: productForm.nameAr, parentId: productForm.parentId }
-              : {
-                  name: productForm.name,
-                  nameAr: productForm.nameAr,
-                  orderRequiresLabTest: productForm.orderRequiresLabTest,
-                }
-          ),
-        }
-      );
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
-        setProductError((d as { error?: string }).error || `Error ${res.status}`);
-        setProductSaving(false);
-        return;
-      }
-    } catch {
-      setProductError(t("Network error — please try again.", "خطأ في الشبكة — يُرجى المحاولة مرة أخرى."));
-      setProductSaving(false);
-      return;
-    }
-    setProductSaving(false);
-    setProductDialogOpen(false);
-    setEditingProduct(null);
-    onProductsChanged();
-  };
-
-  // Archive, not delete — matches the customer register's own convention: a
-  // product referenced by past orders/samples must keep its name on them.
-  const removeProduct = async (p: ILabProduct) => {
-    const isType = !p.parentId;
-    if (!confirm(
-      isType
-        ? t(`Remove product type "${p.name}"?`, `إزالة نوع المنتج "${p.name}"؟`)
-        : t(`Remove grade "${p.name}"?`, `إزالة الصنف "${p.name}"؟`)
-    )) return;
-    const res = await fetch(`/api/lab/products/${p._id}`, { method: "DELETE" });
-    if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
-      alert((d as { error?: string }).error || `Error ${res.status}`);
-      return;
-    }
-    if (productId === p._id) setProductId("");
-    onProductsChanged();
   };
 
   // ── Parameter (test) catalog CRUD ───────────────────────────────────────
@@ -324,7 +273,8 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
         <Package size={16} className="text-slate-400" />
         {/* Leaves only, grouped under their type. A spec sheet belongs to the
             thing that is actually sampled — Super, or نخالة — never to the
-            category "طحين". */}
+            category "طحين". Adding, renaming or removing a TYPE or GRADE
+            itself is done from Lab → Product Catalog, not here. */}
         <Combobox
           triggerClassName={SELECT_CLASS + " w-52"}
           value={productId}
@@ -342,7 +292,7 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
             </bdi>
           </span>
         )}
-        {/* Visible without opening the edit dialog: whether an ORDER of this
+        {/* Visible without leaving this screen: whether an ORDER of this
             product waits for the lab. The spec sheet below is still worth
             filling in either way — wheat is tested routinely as incoming-grain
             QC even though a wheat order carries no lab gate. */}
@@ -351,81 +301,24 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
             {t("Orders skip the lab stage", "الطلبيات تتخطّى مرحلة المختبر")}
           </span>
         )}
-        {selectedProduct && (
-          <>
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => openRenameProduct(selectedProduct)}>
-              <Pencil size={13} />
-              {t("Edit", "تعديل")}
-            </Button>
-            <Button variant="outline" size="sm" className="text-red-500 hover:bg-red-50 hover:text-red-600"
-              onClick={() => removeProduct(selectedProduct)}>
-              <Trash2 size={13} />
-            </Button>
-          </>
-        )}
         <span className="text-sm text-slate-400">
           {t(
             "Limits shown are what applies to this product. A blank field means no limit.",
             "الحدود المعروضة هي المطبَّقة على هذا الصنف. الحقل الفارغ يعني بدون حد."
           )}
         </span>
-        {/* Two buttons, because they make two different things. One list that
-            mixed "طحين" with "Super" is how the catalogue got into the state
-            this screen now has to express. */}
-        <Button variant="outline" size="sm" className="ms-auto gap-1.5" onClick={() => openAddProduct("")}>
-          <Plus size={14} />
-          {t("New type", "نوع منتج جديد")}
-        </Button>
-        <Button
-          variant="outline" size="sm" className="gap-1.5"
-          disabled={productTypes.length === 0}
-          onClick={() => openAddProduct(parentOfSelected?._id ?? selectedProduct?._id ?? productTypes[0]?._id ?? "")}
+        {selectedProduct && (
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={openCopyDialog}>
+            <Copy size={13} />
+            {t("Copy from…", "نسخ من…")}
+          </Button>
+        )}
+        <Link
+          href="/lab/catalog"
+          className="ms-auto text-xs text-sky-600 hover:underline whitespace-nowrap"
         >
-          <Plus size={14} />
-          {t("New grade", "صنف جديد")}
-        </Button>
-      </div>
-
-      {/* The catalogue's own shape, which the picker above can only hint at.
-          Without it there is no screen that answers "what types exist and what
-          is under each" — the question this whole two-level change was made
-          to make askable. */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-3">
-        <div className="flex flex-wrap gap-x-6 gap-y-2">
-          {productTypes.map((type) => {
-            const grades = products.filter((p) => p.parentId === type._id);
-            return (
-              <div key={type._id} className="min-w-40">
-                <p className="text-xs font-medium text-slate-700 flex items-center gap-1.5">
-                  <bdi>{(lang === "ar" && type.nameAr) || type.name}</bdi>
-                  {type.orderRequiresLabTest === false && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 whitespace-nowrap">
-                      {t("no lab stage", "بلا مرحلة مختبر")}
-                    </span>
-                  )}
-                  <button
-                    onClick={() => openRenameProduct(type)}
-                    className="text-slate-300 hover:text-sky-600 cursor-pointer"
-                    title={t("Edit type", "تعديل النوع")}
-                  >
-                    <Pencil size={11} />
-                  </button>
-                </p>
-                {grades.length ? (
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    <bdi>
-                      {grades.map((g) => (lang === "ar" && g.nameAr) || g.name).join("، ")}
-                    </bdi>
-                  </p>
-                ) : (
-                  <p className="text-xs text-slate-300 mt-0.5">
-                    {t("sold as itself — no grades", "يُباع كما هو — بلا أصناف")}
-                  </p>
-                )}
-              </div>
-            );
-          })}
-        </div>
+          {t("Manage types & grades", "إدارة الأنواع والأصناف")}
+        </Link>
       </div>
 
       {error && (
@@ -448,6 +341,18 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
           <tbody className="divide-y divide-slate-100">
             {loading ? (
               <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400">{t("Loading…", "جارٍ التحميل…")}</td></tr>
+            ) : specs.length === 0 && productId ? (
+              <tr>
+                <td colSpan={7} className="px-4 py-10 text-center">
+                  <p className="text-sm text-slate-400">
+                    {t("No tests apply to this product yet.", "لا توجد فحوصات مطبَّقة على هذا الصنف بعد.")}
+                  </p>
+                  <Button variant="outline" size="sm" className="gap-1.5 mt-3" onClick={openCopyDialog}>
+                    <Copy size={13} />
+                    {t("Copy the spec sheet from another product", "نسخ ورقة المواصفات من صنف آخر")}
+                  </Button>
+                </td>
+              </tr>
             ) : specs.map((spec) => {
               const draft = drafts[spec.parameterId];
               const dirty = draft && !same(draft, toDraft(spec));
@@ -596,120 +501,6 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
           )}
         </div>
       </div>
-
-      <Dialog open={productDialogOpen} onOpenChange={(o) => { if (!o) { setProductDialogOpen(false); setEditingProduct(null); } }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>
-              {editingProduct
-                ? productForm.parentId ? t("Edit grade", "تعديل الصنف") : t("Edit product type", "تعديل نوع المنتج")
-                : productForm.parentId ? t("New grade", "صنف جديد") : t("New product type", "نوع منتج جديد")}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label>{t("Name", "الاسم")} *</Label>
-              <Input value={productForm.name} onChange={(e) => setProductForm((p) => ({ ...p, name: e.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>{t("Arabic name", "الاسم بالعربية")}</Label>
-              <Input value={productForm.nameAr} onChange={(e) => setProductForm((p) => ({ ...p, nameAr: e.target.value }))} />
-            </div>
-
-            {/* Which type a grade belongs to. Fixed once created: moving a
-                grade between types would change the spec sheet it resolves
-                and, if the two types disagree about the lab, the route its
-                future orders take — neither of which should happen as a side
-                effect of a rename dialog. */}
-            {productForm.parentId && (
-              <div className="space-y-1.5">
-                <Label>{t("Product type", "نوع المنتج")} *</Label>
-                {editingProduct ? (
-                  <p className="text-sm text-slate-600 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                    <bdi>
-                      {(() => {
-                        const parent = products.find((x) => x._id === productForm.parentId);
-                        return parent ? (lang === "ar" && parent.nameAr) || parent.name : "—";
-                      })()}
-                    </bdi>
-                  </p>
-                ) : (
-                  <Combobox
-                    triggerClassName={SELECT_CLASS + " w-full"}
-                    value={productForm.parentId}
-                    onChange={(v) => setProductForm((f) => ({ ...f, parentId: v }))}
-                    options={productTypes.map((x) => ({
-                      value: x._id,
-                      label: (lang === "ar" && x.nameAr) || x.name,
-                    }))}
-                  />
-                )}
-                <p className="text-xs text-slate-400">
-                  {t(
-                    "A grade inherits its type's lab rule — it cannot be set separately.",
-                    "يرث الصنف قاعدة الفحص من نوعه — ولا تُضبط له على حدة."
-                  )}
-                </p>
-              </div>
-            )}
-
-            {/* The flag that decides a whole stage of the approval chain, so it
-                is a labelled statement with its consequence spelled out rather
-                than a bare switch. Only on a TYPE: the decision is "flour is
-                tested, bran is not", which is not a sentence about Super. */}
-            {!productForm.parentId && (
-            <label className="flex items-start gap-2.5 rounded-lg border border-slate-200 px-3 py-2.5 cursor-pointer hover:bg-slate-50">
-              <input
-                type="checkbox"
-                className="mt-0.5 h-4 w-4 accent-sky-600 cursor-pointer"
-                checked={productForm.orderRequiresLabTest}
-                onChange={(e) => setProductForm((p) => ({ ...p, orderRequiresLabTest: e.target.checked }))}
-              />
-              <span className="text-sm">
-                <span className="font-medium text-slate-800">
-                  {t("Orders need a lab test", "الطلبيات تخضع للفحص المخبري")}
-                </span>
-                <span className="block text-xs text-slate-500 mt-0.5">
-                  {productForm.orderRequiresLabTest
-                    ? t(
-                        "An order of this product stops at the lab for results before the General Manager signs it off.",
-                        "تتوقّف طلبية هذا الصنف عند المختبر لإدخال النتائج قبل اعتماد المدير العام."
-                      )
-                    : t(
-                        "An order of this product skips the lab stage entirely — from the Technical Manager straight to the General Manager's sign-off. The lab can still test samples of it as routine QC.",
-                        "تتخطّى طلبية هذا الصنف مرحلة المختبر تمامًا — من المدير التقني إلى اعتماد المدير العام مباشرة. ويبقى بإمكان المختبر فحص عيّناته كفحص دوري."
-                      )}
-                </span>
-                {/* Already-raised orders keep the route they were created
-                    with — the one thing a person flipping this needs to know. */}
-                {editingProduct && (
-                  <span className="block text-xs text-amber-700 mt-1">
-                    {t(
-                      "Applies to new orders only, and to every grade of this type. Orders already in progress keep the route they were raised with.",
-                      "ينطبق على الطلبيات الجديدة فقط، وعلى كل أصناف هذا النوع. والطلبيات الجارية تحتفظ بالمسار الذي أُنشئت به."
-                    )}
-                  </span>
-                )}
-              </span>
-            </label>
-            )}
-
-            {productError && (
-              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{productError}</p>
-            )}
-          </div>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => { setProductDialogOpen(false); setEditingProduct(null); }} disabled={productSaving}>
-              {t("Cancel", "إلغاء")}
-            </Button>
-            <Button onClick={saveProduct} disabled={productSaving || !productForm.name.trim()}>
-              {productSaving
-                ? t("Saving…", "جارٍ الحفظ…")
-                : editingProduct ? t("Save", "حفظ") : t("Create", "إنشاء")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={paramDialogOpen} onOpenChange={(o) => { if (!o) { setParamDialogOpen(false); setEditingParam(null); } }}>
         <DialogContent className="max-w-md">
@@ -866,6 +657,49 @@ export function ProductSpecsTab({ products, parameters, onProductsChanged, onPar
               {paramSaving
                 ? t("Saving…", "جارٍ الحفظ…")
                 : editingParam ? t("Save", "حفظ") : t("Add", "إضافة")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={copyDialogOpen} onOpenChange={(o) => !o && setCopyDialogOpen(false)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t("Copy spec sheet", "نسخ ورقة المواصفات")}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-slate-600">
+              {t(
+                "Copies every test and limit that currently applies to another product onto this one — useful for a brand-new grade that has nothing configured yet.",
+                "تنسخ كل فحص وحدّ ينطبق حاليًا على صنف آخر إلى هذا الصنف — مفيدة لصنف جديد لم يُضبط له شيء بعد."
+              )}
+            </p>
+            <div className="space-y-1.5">
+              <Label>{t("Copy from", "النسخ من")} *</Label>
+              <Combobox
+                triggerClassName={SELECT_CLASS + " w-full"}
+                value={copySourceId}
+                onChange={setCopySourceId}
+                searchPlaceholder={t("Search products…", "ابحث عن صنف…")}
+                options={productPickerOptions(products, lang).filter((o) => o.value !== productId)}
+              />
+            </div>
+            <p className="text-xs text-slate-400">
+              {t(
+                "Anything already configured here is left as-is — this only fills in what's missing.",
+                "ما هو مضبوط هنا مسبقًا يبقى كما هو — هذا يملأ الناقص فقط."
+              )}
+            </p>
+            {copyError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{copyError}</p>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setCopyDialogOpen(false)} disabled={copySaving}>
+              {t("Cancel", "إلغاء")}
+            </Button>
+            <Button onClick={runCopy} disabled={copySaving || !copySourceId}>
+              {copySaving ? t("Copying…", "جارٍ النسخ…") : t("Copy", "نسخ")}
             </Button>
           </DialogFooter>
         </DialogContent>

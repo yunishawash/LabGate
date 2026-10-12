@@ -26,7 +26,8 @@
     "check:order-routes": "tsx src/scripts/check-order-routes.ts",
     "seed:prod": "tsx src/scripts/seed-production.ts",
     "clear:demo": "tsx src/scripts/clear-demo-data.ts",
-    "reset:password": "tsx src/scripts/reset-password.ts"
+    "reset:password": "tsx src/scripts/reset-password.ts",
+    "auto-reject:stuck": "tsx src/scripts/auto-reject-stuck-orders.ts"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.11",

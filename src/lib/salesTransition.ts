@@ -219,7 +219,10 @@ export async function claimAndAdvance(
 export async function rejectOrder(
   orderId: string,
   order: OrderLike,
-  actor: { _id: mongoose.Types.ObjectId; name: string; role: string },
+  /** `_id: null` is the system itself acting, not a person — see
+   *  `autoRejectStuckOrders()`, the only caller that passes it. `rejection.byId`
+   *  and the step's `actedById` are both nullable for exactly this case. */
+  actor: { _id: mongoose.Types.ObjectId | null; name: string; role: string },
   reason: string,
   actedForRole: string,
   /** Set when the reason came from the managed list. `reason` above is still
@@ -285,7 +288,7 @@ export async function rejectOrder(
     field: stageKey,
     oldValue: order.currentStageIndex,
     newValue: "Rejected",
-    performedBy: actor._id,
+    performedBy: actor._id ?? "system",
     performedByName: actor.name,
     notes: reason,
   });

@@ -7,8 +7,8 @@ import {
 import { useLang } from "@/components/layout/AppShell";
 import { Card } from "@/components/dashboard/blocks";
 import { Combobox } from "@/components/ui/combobox";
-import { productPickerOptions } from "@/types";
-import type { ILabProduct } from "@/types";
+import { groupProductsByType, isOrderableProduct } from "@/types";
+import type { ILabProduct, ILabParameter } from "@/types";
 import { LineChart as LineChartIcon, PieChart as PieChartIcon, BarChart3 } from "lucide-react";
 
 const IN_CARD_SELECT_CLASS =
@@ -71,18 +71,22 @@ const tons = (kg: number) => Math.round((kg / 1000) * 10) / 10;
 type QualityTrendRow = { year: number; month: number; samples: number; inSpecPct: number | null };
 
 /**
- * In-spec % by month, for ONE lab parameter — "W" (الطاقة, 10e-4J) — against
- * a target line.
+ * In-spec % by month, for one lab-tested grade (or all of them) and one
+ * chosen lab test — widened 2026-10-12 from the original "W"-only build,
+ * per client request, then widened again the same day from "Flour only" to
+ * every product TYPE actually subject to the lab (`orderRequiresLabTest`),
+ * so a newly added type — tested flour, or a raw-material "basic product"
+ * intake type alike — shows up here without this card needing a code change.
  *
- * Self-fetching, with its OWN product selector inside the card (client
- * request, 2026-10-08): the page's top-of-page product filter deliberately
- * does NOT reach this card — that filter answers "what does the catalogue
- * look like", this one asks "how has this one grade's energy reading
- * moved", and letting both drive the same chart would mean whichever was
- * set last silently overrides the other with no visible reason why. The
- * card still follows the page's date range and customer/city scope, via
- * `filters` — those narrow WHICH ORDERS count at all, which is not a
- * question this card's own selector is answering.
+ * Self-fetching, with its OWN product AND parameter selectors inside the
+ * card (client request, 2026-10-08 / 2026-10-12): the page's top-of-page
+ * product filter deliberately does NOT reach this card — that filter
+ * answers "what does the catalogue look like", this one asks "how has this
+ * one grade's chosen test moved", and letting both drive the same chart
+ * would mean whichever was set last silently overrides the other with no
+ * visible reason why. The card still follows the page's date range and
+ * customer/city scope, via `filters` — those narrow WHICH ORDERS count at
+ * all, which is not a question this card's own selectors are answering.
  */
 export function QualityTrend({
   filters,
@@ -90,11 +94,14 @@ export function QualityTrend({
   const { lang, t } = useLang();
   const TARGET = 85;
   const [productId, setProductId] = useState("");
+  const [parameterId, setParameterId] = useState("");
   const [products, setProducts] = useState<ILabProduct[]>([]);
+  const [parameters, setParameters] = useState<ILabParameter[]>([]);
   const [data, setData] = useState<QualityTrendRow[] | null>(null);
 
   useEffect(() => {
     fetch("/api/lab/products").then((r) => r.json()).then((d) => setProducts(d.products || [])).catch(() => {});
+    fetch("/api/lab/parameters").then((r) => r.json()).then((d) => setParameters(d.parameters || [])).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -104,27 +111,69 @@ export function QualityTrend({
     if (filters.customerId) qs.set("customerId", filters.customerId);
     if (filters.cityId) qs.set("cityId", filters.cityId);
     if (productId) qs.set("productId", productId);
+    if (parameterId) qs.set("parameterId", parameterId);
     let cancelled = false;
     fetch(`/api/dashboard/quality-trend?${qs.toString()}`)
       .then((r) => r.json())
-      .then((d) => { if (!cancelled) setData(d.rows || []); })
+      .then((d) => {
+        if (cancelled) return;
+        setData(d.rows || []);
+        // First load, no explicit choice: the server fell back to "W" — sync
+        // the picker to show that, rather than leaving it on "All tests"
+        // while a specific one is actually driving the chart.
+        if (!parameterId && d.parameterId) setParameterId(d.parameterId);
+      })
       .catch(() => { if (!cancelled) setData([]); });
     return () => { cancelled = true; };
-  }, [filters.from, filters.to, filters.customerId, filters.cityId, productId]);
+  }, [filters.from, filters.to, filters.customerId, filters.cityId, productId, parameterId]);
+
+  // Every grade of every LAB-TESTED type (client request, 2026-10-12) —
+  // never the whole catalogue, and never hardcoded to Flour: any type
+  // flagged `orderRequiresLabTest` qualifies, including one added after this
+  // card shipped. Same leaf-only filter `productPickerOptions` itself uses.
+  const labTestedGrades = groupProductsByType(products)
+    .filter((g) => g.type.orderRequiresLabTest !== false)
+    .flatMap((g) => g.grades.filter(isOrderableProduct));
 
   const picker = (
-    <Combobox
-      triggerClassName={IN_CARD_SELECT_CLASS + " w-40"}
-      value={productId}
-      onChange={setProductId}
-      placeholder={t("All products", "كل الأصناف")}
-      searchPlaceholder={t("Search products…", "ابحث عن صنف…")}
-      options={[
-        { value: "", label: t("All products", "كل الأصناف") },
-        ...productPickerOptions(products, lang),
-      ]}
-    />
+    <div className="flex items-center gap-1.5">
+      <Combobox
+        triggerClassName={IN_CARD_SELECT_CLASS + " w-36"}
+        value={productId}
+        onChange={setProductId}
+        placeholder={t("All lab-tested products", "كل الأصناف الخاضعة للفحص")}
+        searchPlaceholder={t("Search…", "ابحث…")}
+        options={[
+          { value: "", label: t("All lab-tested products", "كل الأصناف الخاضعة للفحص") },
+          ...labTestedGrades.map((g) => ({
+            value: g._id,
+            label: (lang === "ar" && g.nameAr) || g.name,
+            group: (() => {
+              const parent = products.find((p) => p._id === g.parentId);
+              return parent ? (lang === "ar" && parent.nameAr) || parent.name : undefined;
+            })(),
+          })),
+        ]}
+      />
+      <Combobox
+        triggerClassName={IN_CARD_SELECT_CLASS + " w-36"}
+        value={parameterId}
+        onChange={setParameterId}
+        placeholder={t("Test", "الاختبار")}
+        searchPlaceholder={t("Search…", "ابحث…")}
+        options={parameters.map((p) => ({
+          value: p._id,
+          label: (lang === "ar" && p.nameAr) || p.name,
+        }))}
+      />
+    </div>
   );
+
+  const selectedParameterLabel = (() => {
+    const p = parameters.find((x) => x._id === parameterId);
+    if (!p) return "W";
+    return (lang === "ar" && p.nameAr) || p.name;
+  })();
 
   if (data === null) {
     return (
@@ -204,8 +253,8 @@ export function QualityTrend({
           </div>
           <p className="text-xs text-slate-400 mt-1">
             {t(
-              "Based on the \"W\" (Energy, 10e-4J) reading only. Warnings count as in spec; a red point is a month that fell below target.",
-              "بحسب قيمة «الطاقة (W)» (10e-4J) فقط. التحذيرات محسوبة ضمن المطابق، والنقطة الحمراء شهر انخفض عن الهدف."
+              `Based on the "${selectedParameterLabel}" reading only, lab-tested products only. Warnings count as in spec; a red point is a month that fell below target.`,
+              `بحسب قيمة «${selectedParameterLabel}» فقط، للأصناف الخاضعة للفحص المخبري فقط. التحذيرات محسوبة ضمن المطابق، والنقطة الحمراء شهر انخفض عن الهدف.`
             )}
           </p>
         </>

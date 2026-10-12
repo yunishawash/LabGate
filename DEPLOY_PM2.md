@@ -182,6 +182,20 @@ crontab -e
 15 3 * * * MONGODB_URI=mongodb://127.0.0.1:27017/labgate /opt/LabGate/ops/backup.sh >> /var/log/labgate-backup.log 2>&1
 ```
 
+Alongside it, the same crontab is where the 48h auto-reject job belongs
+(`src/scripts/auto-reject-stuck-orders.ts` — rejects and closes any order
+stuck Pending past `LATE_HOURS`, see that file's header). Every 15 minutes is
+plenty against a 48h threshold:
+
+```bash
+*/15 * * * * cd /opt/LabGate && MONGODB_URI=mongodb://127.0.0.1:27017/labgate /usr/bin/npx tsx src/scripts/auto-reject-stuck-orders.ts --yes >> /var/log/labgate-auto-reject.log 2>&1
+```
+
+Run it once by hand first, WITHOUT `--yes` (the default), and read what it
+prints — it lists every order it would reject before anything commits, which
+on a first run may include orders that have been stuck since before this
+job existed.
+
 **Rehearse the restore. A backup nobody has restored is a hope.**
 
 ```bash
